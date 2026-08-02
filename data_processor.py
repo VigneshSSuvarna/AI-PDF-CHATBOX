@@ -1,6 +1,6 @@
 # Run these commands in terminal before execution :
 # python -m pip install PyMuPDF
-# pip install pyplumber
+# pip install pdfplumber
 # pip install pypdf
 
 import fitz
@@ -27,23 +27,14 @@ def extract_rag_text(file_path):
                 
     return documents
 
-# --- Test it ---
-if __name__ == "__main__":
-    file_path = "AI CHAT BOT USING RAG.pdf"
-    langchain_docs = extract_rag_text(file_path)
-    
-    print(f"Extracted {len(langchain_docs)} pages formatted for LangChain!")
-
 def extract_text(file_path):
     """Extract all text from the PDF."""
     with fitz.open(file_path) as pdf:
         return "".join(page.get_text() for page in pdf)
 
-
 def extract_links(file_path):
     """Extract all hyperlinks from the PDF."""
     links = []
-
     with fitz.open(file_path) as pdf:
         for page_num, page in enumerate(pdf, start=1):
             page_links = page.get_links()
@@ -52,14 +43,11 @@ def extract_links(file_path):
                     "page": page_num,
                     "links": page_links
                 })
-
     return links
-
 
 def extract_tables(file_path):
     """Extract all tables from the PDF."""
     tables = []
-
     with pdfplumber.open(file_path) as pdf:
         for page_num, page in enumerate(pdf.pages, start=1):
             page_tables = page.extract_tables()
@@ -68,44 +56,40 @@ def extract_tables(file_path):
                     "page": page_num,
                     "tables": page_tables
                 })
-
     return tables
-
 
 def extract_images(file_path):
     """Extract all images from the PDF."""
     reader = PdfReader(file_path)
     saved_files = []
-
     for page_num, page in enumerate(reader.pages, start=1):
         for img_num, img in enumerate(page.images, start=1):
             filename = f"page{page_num}_img{img_num}.png"
-
             with open(filename, "wb") as fp:
                 fp.write(img.data)
-
             saved_files.append(filename)
-
     return saved_files
 
 
-# ---------------- Main ----------------
+# ---------------- Main Execution ----------------
+if __name__ == "__main__":
+    file_path = "AI CHAT BOT USING RAG.pdf"
 
-file_path = "AI CHAT BOT USING RAG.pdf"
+    # 1. Multi-modal Extractions
+    text = extract_text(file_path)
+    links = extract_links(file_path)
+    tables = extract_tables(file_path)
+    images = extract_images(file_path)
 
-text = extract_text(file_path)
-links = extract_links(file_path)
-tables = extract_tables(file_path)
-images = extract_images(file_path)
-document=extract_rag_text(file_path)
+    print(f"Characters extracted : {len(text)}")
+    print(f"Pages containing links : {len(links)}")
+    print(f"Pages containing tables : {len(tables)}")
+    print(f"Images extracted : {len(images)}")
+    print("-" * 30)
 
-print(f"Characters extracted : {len(text)}")
-print(f"Pages containing links : {len(links)}")
-print(f"Pages containing tables : {len(tables)}")
-print(f"Images extracted : {len(images)}")
-
-#print(text)
-#print(links)
-#print(tables)
-#print(images)
-print(document)
+    # 2. RAG Specific Extraction
+    langchain_docs = extract_rag_text(file_path)
+    print(f"Extracted {len(langchain_docs)} pages formatted for LangChain!")
+    
+    # You can uncomment this to see the actual LangChain Document objects:
+    # print(langchain_docs[0])
