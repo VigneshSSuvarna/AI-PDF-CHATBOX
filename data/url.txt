@@ -1,0 +1,5 @@
+https://en.wikipedia.org/wiki/Retrieval-augmented_generation
+https://en.wikipedia.org/wiki/Artificial_intelligence
+https://en.wikipedia.org/wiki/Large_language_model
+https://docs.trychroma.com/docs/overview/introduction
+https://docs.langchain.com/oss/python/deepagents/retrieval
