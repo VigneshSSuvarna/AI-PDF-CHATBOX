@@ -1,8 +1,3 @@
-# Run these commands in terminal before execution :
-# python -m pip install PyMuPDF
-# pip install pdfplumber
-# pip install pypdf
-
 import fitz
 import pdfplumber
 from pypdf import PdfReader
