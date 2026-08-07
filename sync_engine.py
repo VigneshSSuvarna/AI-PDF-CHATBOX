@@ -2,7 +2,7 @@ import os
 import hashlib
 import json
 
-TRACKING_FILE = "processed_files.json"
+TRACKING_FILE = "output/processed_files.json"
 DATA_FOLDER = "data"
 
 def get_file_hash(filepath):
@@ -50,7 +50,7 @@ def main():
 
     # 3. Actually process the new/changed files (Simulated here)
     if files_to_process:
-        print(f"\n⚙️ Extracting text and chunking {len(files_to_process)} files...")
+        print(f"\n Extracting text and chunking {len(files_to_process)} files...")
         # --> MEMBER 1 & 4's CODE GOES HERE <--
         # run_pdf_loader(files_to_process)
         # run_text_chunker(files_to_process)
