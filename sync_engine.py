@@ -2,7 +2,7 @@ import os
 import hashlib
 import json
 
-TRACKING_FILE = "processed_files.json"
+TRACKING_FILE = "output/processed_files.json"
 DATA_FOLDER = "data"
 
 def get_file_hash(filepath):
