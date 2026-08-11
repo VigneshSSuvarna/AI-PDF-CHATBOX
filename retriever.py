@@ -1,5 +1,21 @@
+"""
+retriever.py
+============
+
+Core Retriever Logic for AI-PDF-CHATBOX
+
+Purpose:
+    1. Accept a user's question.
+    2. Convert the question into an embedding.
+    3. Search the ChromaDB vector database.
+    4. Return the most relevant document chunks.
+
+This module is designed to be easily imported into
+the Week 3 FastAPI + LLM backend.
+"""
+
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -13,41 +29,41 @@ CHROMA_DB_PATH = "chroma_db"
 
 COLLECTION_NAME = "capstone_knowledge_base"
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 DEFAULT_TOP_K = 5
 
 
 # ============================================================
-# RETRIEVER
+# RETRIEVER CLASS
 # ============================================================
 
-class PDFRetriever:
+class Retriever:
     """
-    Semantic retriever for the AI PDF Chatbox.
+    Semantic retriever for the AI-PDF-CHATBOX.
 
-    It converts a user query into an embedding and searches
-    the ChromaDB vector database for the most relevant chunks.
+    The same embedding model used to create the ChromaDB
+    vectors must be used to embed the user's query.
     """
 
     def __init__(
         self,
         db_path: str = CHROMA_DB_PATH,
         collection_name: str = COLLECTION_NAME,
-        embedding_model: str = EMBEDDING_MODEL,
-    ):
+        model_name: str = EMBEDDING_MODEL_NAME,
+    ) -> None:
 
         self.db_path = db_path
         self.collection_name = collection_name
-        self.embedding_model = embedding_model
+        self.model_name = model_name
 
         # ----------------------------------------------------
-        # Check ChromaDB
+        # Check whether ChromaDB exists
         # ----------------------------------------------------
 
         if not os.path.exists(self.db_path):
             raise FileNotFoundError(
-                f"ChromaDB directory not found: {self.db_path}\n"
+                f"ChromaDB directory '{self.db_path}' was not found.\n"
                 "Please run vector_store.py first."
             )
 
@@ -56,22 +72,21 @@ class PDFRetriever:
         # ----------------------------------------------------
 
         print(
-            f"Loading embedding model: "
-            f"{self.embedding_model}"
+            f"Loading embedding model: {self.model_name}"
         )
 
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=self.embedding_model,
+            model_name=self.model_name,
             model_kwargs={
                 "device": "cpu"
             },
             encode_kwargs={
                 "normalize_embeddings": True
-            }
+            },
         )
 
         # ----------------------------------------------------
-        # Connect to ChromaDB
+        # Connect to existing ChromaDB
         # ----------------------------------------------------
 
         print("Connecting to ChromaDB...")
@@ -82,40 +97,254 @@ class PDFRetriever:
             persist_directory=self.db_path,
         )
 
-        print("Connected successfully.")
+        print("Connected to ChromaDB successfully.")
 
         # ----------------------------------------------------
-        # Display database information
+        # Display number of stored chunks
         # ----------------------------------------------------
 
         try:
-
             count = self.vector_store._collection.count()
 
             print(
-                f"Total chunks in database: {count}"
+                f"Chunks available for search: {count}"
             )
 
         except Exception:
-
-            print(
-                "Could not determine number of chunks."
-            )
+            pass
 
 
     # ========================================================
-    # EMBED USER QUERY
+    # EMBED QUERY
     # ========================================================
 
     def embed_query(self, query: str) -> List[float]:
         """
-        Convert the user's question into an embedding vector.
+        Convert a user's question into an embedding vector.
 
         Example:
 
             "What is artificial intelligence?"
 
         becomes a numerical vector.
+        """
+
+        query = self._validate_query(query)
+
+        return self.embeddings.embed_query(query)
+
+
+    # ========================================================
+    # MAIN SEARCH METHOD
+    # ========================================================
+
+    def search(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Retrieve the most relevant document chunks.
+
+        Parameters
+        ----------
+        query:
+            User's natural-language question.
+
+        top_k:
+            Number of chunks to retrieve.
+
+        metadata_filter:
+            Optional ChromaDB metadata filter.
+
+        Returns
+        -------
+        List[Document]
+            Relevant LangChain Document objects.
+        """
+
+        query = self._validate_query(query)
+
+        if top_k <= 0:
+            raise ValueError(
+                "top_k must be greater than 0."
+            )
+
+        # ----------------------------------------------------
+        # Perform semantic similarity search
+        # ----------------------------------------------------
+
+        if metadata_filter:
+
+            results = self.vector_store.similarity_search(
+                query=query,
+                k=top_k,
+                filter=metadata_filter,
+            )
+
+        else:
+
+            results = self.vector_store.similarity_search(
+                query=query,
+                k=top_k,
+            )
+
+        return results
+
+
+    # ========================================================
+    # SEARCH WITH SCORES
+    # ========================================================
+
+    def search_with_scores(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[Any, float]]:
+        """
+        Retrieve relevant chunks along with their distance scores.
+
+        Returns:
+
+            [
+                (Document, score),
+                (Document, score),
+                ...
+            ]
+
+        Lower distance generally means greater similarity.
+        """
+
+        query = self._validate_query(query)
+
+        if top_k <= 0:
+            raise ValueError(
+                "top_k must be greater than 0."
+            )
+
+        # ----------------------------------------------------
+        # Search
+        # ----------------------------------------------------
+
+        if metadata_filter:
+
+            results = (
+                self.vector_store
+                .similarity_search_with_score(
+                    query=query,
+                    k=top_k,
+                    filter=metadata_filter,
+                )
+            )
+
+        else:
+
+            results = (
+                self.vector_store
+                .similarity_search_with_score(
+                    query=query,
+                    k=top_k,
+                )
+            )
+
+        return results
+
+
+    # ========================================================
+    # RETURN CONTEXT FOR LLM
+    # ========================================================
+
+    def get_context(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Retrieve relevant chunks and combine them into one
+        context string.
+
+        This method is especially useful for Week 3.
+
+        Example:
+
+            context = retriever.get_context(
+                "What is machine learning?"
+            )
+
+            # Pass context to the LLM.
+        """
+
+        documents = self.search(
+            query=query,
+            top_k=top_k,
+            metadata_filter=metadata_filter,
+        )
+
+        if not documents:
+            return ""
+
+        context_parts = []
+
+        for document in documents:
+
+            context_parts.append(
+                document.page_content
+            )
+
+        return "\n\n".join(context_parts)
+
+
+    # ========================================================
+    # RETURN RESULTS WITH METADATA
+    # ========================================================
+
+    def get_results(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return search results in a simple dictionary format.
+
+        Useful for APIs and JSON responses.
+        """
+
+        documents = self.search(
+            query=query,
+            top_k=top_k,
+            metadata_filter=metadata_filter,
+        )
+
+        results = []
+
+        for rank, document in enumerate(
+            documents,
+            start=1,
+        ):
+
+            results.append(
+                {
+                    "rank": rank,
+                    "content": document.page_content,
+                    "metadata": document.metadata,
+                }
+            )
+
+        return results
+
+
+    # ========================================================
+    # VALIDATE QUERY
+    # ========================================================
+
+    @staticmethod
+    def _validate_query(query: str) -> str:
+        """
+        Validate and clean the user's query.
         """
 
         if not isinstance(query, str):
@@ -130,382 +359,76 @@ class PDFRetriever:
                 "Query cannot be empty."
             )
 
-        vector = self.embeddings.embed_query(query)
-
-        return vector
-
-
-    # ========================================================
-    # BASIC RETRIEVAL
-    # ========================================================
-
-    def retrieve(
-        self,
-        query: str,
-        top_k: int = DEFAULT_TOP_K
-    ):
-        """
-        Retrieve the most relevant document chunks.
-
-        Parameters
-        ----------
-        query : str
-            User's question.
-
-        top_k : int
-            Number of chunks to retrieve.
-
-        Returns
-        -------
-        List
-            List of LangChain Document objects.
-        """
-
-        if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than zero."
-            )
-
-        # ----------------------------------------------------
-        # Convert query into vector
-        # ----------------------------------------------------
-
-        query_vector = self.embed_query(query)
-
-        # ----------------------------------------------------
-        # Similarity search
-        # ----------------------------------------------------
-
-        documents = (
-            self.vector_store
-            .similarity_search_by_vector(
-                embedding=query_vector,
-                k=top_k
-            )
-        )
-
-        return documents
-
-
-    # ========================================================
-    # RETRIEVAL WITH SCORES
-    # ========================================================
-
-    def retrieve_with_scores(
-        self,
-        query: str,
-        top_k: int = DEFAULT_TOP_K
-    ) -> List[Dict[str, Any]]:
-        """
-        Retrieve documents along with their ChromaDB
-        distance scores.
-
-        Lower distance generally means the vectors are
-        more similar.
-        """
-
-        if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than zero."
-            )
-
-        # ----------------------------------------------------
-        # Generate query embedding
-        # ----------------------------------------------------
-
-        query_vector = self.embed_query(query)
-
-        # ----------------------------------------------------
-        # Access Chroma collection
-        # ----------------------------------------------------
-
-        collection = self.vector_store._collection
-
-        results = collection.query(
-            query_embeddings=[query_vector],
-            n_results=top_k,
-            include=[
-                "documents",
-                "metadatas",
-                "distances"
-            ]
-        )
-
-        documents = results.get(
-            "documents",
-            [[]]
-        )[0]
-
-        metadatas = results.get(
-            "metadatas",
-            [[]]
-        )[0]
-
-        distances = results.get(
-            "distances",
-            [[]]
-        )[0]
-
-        retrieved_results = []
-
-        for i in range(len(documents)):
-
-            retrieved_results.append(
-                {
-                    "content": documents[i],
-                    "metadata": metadatas[i],
-                    "distance": distances[i]
-                }
-            )
-
-        return retrieved_results
-
-
-    # ========================================================
-    # METADATA FILTERING
-    # ========================================================
-
-    def retrieve_with_filter(
-        self,
-        query: str,
-        metadata_filter: Optional[Dict[str, Any]] = None,
-        top_k: int = DEFAULT_TOP_K
-    ) -> List[Dict[str, Any]]:
-        """
-        Perform semantic search with an optional metadata filter.
-
-        Example:
-
-            metadata_filter = {
-                "source": "example.pdf"
-            }
-        """
-
-        if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than zero."
-            )
-
-        query_vector = self.embed_query(query)
-
-        collection = self.vector_store._collection
-
-        search_parameters = {
-            "query_embeddings": [query_vector],
-            "n_results": top_k,
-            "include": [
-                "documents",
-                "metadatas",
-                "distances"
-            ]
-        }
-
-        # ----------------------------------------------------
-        # Add metadata filter
-        # ----------------------------------------------------
-
-        if metadata_filter:
-
-            search_parameters["where"] = metadata_filter
-
-        # ----------------------------------------------------
-        # Search
-        # ----------------------------------------------------
-
-        results = collection.query(
-            **search_parameters
-        )
-
-        documents = results.get(
-            "documents",
-            [[]]
-        )[0]
-
-        metadatas = results.get(
-            "metadatas",
-            [[]]
-        )[0]
-
-        distances = results.get(
-            "distances",
-            [[]]
-        )[0]
-
-        retrieved_results = []
-
-        for i in range(len(documents)):
-
-            retrieved_results.append(
-                {
-                    "content": documents[i],
-                    "metadata": metadatas[i],
-                    "distance": distances[i]
-                }
-            )
-
-        return retrieved_results
-
-
-    # ========================================================
-    # DISPLAY NORMAL DOCUMENT RESULTS
-    # ========================================================
-
-    def display_documents(
-        self,
-        documents
-    ):
-        """
-        Display LangChain Document objects.
-        """
-
-        print("\n")
-        print("=" * 80)
-        print("RETRIEVED RESULTS")
-        print("=" * 80)
-
-        if not documents:
-
-            print("No relevant documents found.")
-
-            return
-
-        for index, document in enumerate(
-            documents,
-            start=1
-        ):
-
-            print("\n")
-            print("-" * 80)
-            print(f"RESULT {index}")
-            print("-" * 80)
-
-            print("\nCONTENT:")
-            print(document.page_content)
-
-            print("\nMETADATA:")
-
-            if document.metadata:
-
-                for key, value in (
-                    document.metadata.items()
-                ):
-
-                    print(
-                        f"  {key}: {value}"
-                    )
-
-            else:
-
-                print("  No metadata available.")
-
-        print("\n")
-        print("=" * 80)
-
-
-    # ========================================================
-    # DISPLAY SCORED RESULTS
-    # ========================================================
-
-    def display_scored_results(
-        self,
-        results
-    ):
-        """
-        Display results with similarity/distance scores.
-        """
-
-        print("\n")
-        print("=" * 80)
-        print("TOP RETRIEVED CHUNKS")
-        print("=" * 80)
-
-        if not results:
-
-            print("No relevant documents found.")
-
-            return
-
-        for index, result in enumerate(
-            results,
-            start=1
-        ):
-
-            print("\n")
-            print("-" * 80)
-            print(f"RESULT {index}")
-            print("-" * 80)
-
-            print(
-                f"\nDistance: "
-                f"{result['distance']:.6f}"
-            )
-
-            print("\nCONTENT:")
-
-            print(
-                result["content"]
-            )
-
-            print("\nMETADATA:")
-
-            metadata = result.get(
-                "metadata",
-                {}
-            )
-
-            if metadata:
-
-                for key, value in metadata.items():
-
-                    print(
-                        f"  {key}: {value}"
-                    )
-
-            else:
-
-                print(
-                    "  No metadata available."
-                )
-
-        print("\n")
-        print("=" * 80)
+        return query
 
 
 # ============================================================
-# TERMINAL SEARCH
+# SIMPLE HELPER FUNCTION
 # ============================================================
 
-def terminal_search():
+def retrieve(
+    query: str,
+    top_k: int = DEFAULT_TOP_K,
+    metadata_filter: Optional[Dict[str, Any]] = None,
+):
+    """
+    Simple function for retrieving documents.
 
-    print("\n")
-    print("=" * 80)
-    print("AI PDF CHATBOX")
-    print("CORE RETRIEVER")
-    print("=" * 80)
+    Example:
+
+        results = retrieve(
+            "What is artificial intelligence?",
+            top_k=5
+        )
+    """
+
+    retriever = Retriever()
+
+    return retriever.search(
+        query=query,
+        top_k=top_k,
+        metadata_filter=metadata_filter,
+    )
+
+
+# ============================================================
+# TERMINAL TEST
+# ============================================================
+
+def terminal_test() -> None:
+    """
+    Simple terminal interface for testing the retriever.
+
+    This is only a test interface.
+    Week 3 can import Retriever directly.
+    """
+
+    print()
+    print("=" * 70)
+    print("AI PDF CHATBOX - CORE RETRIEVER")
+    print("=" * 70)
 
     try:
 
-        retriever = PDFRetriever()
+        retriever = Retriever()
 
     except Exception as error:
 
-        print("\nERROR:")
+        print()
+        print("ERROR INITIALIZING RETRIEVER")
+        print("-" * 70)
         print(error)
+        print("-" * 70)
 
         return
 
-    print("\nRetriever is ready.")
-
-    print(
-        "Enter a question to search the knowledge base."
-    )
-
-    print(
-        "Type 'exit' to quit."
-    )
+    print()
+    print("Retriever is ready.")
+    print("Ask a question to search the knowledge base.")
+    print("Type 'exit' to quit.")
 
     # --------------------------------------------------------
-    # Search loop
+    # Interactive search loop
     # --------------------------------------------------------
 
     while True:
@@ -515,6 +438,22 @@ def terminal_search():
             query = input(
                 "\nQuestion: "
             ).strip()
+
+            # ------------------------------------------------
+            # Exit commands
+            # ------------------------------------------------
+
+            if query.lower() in {
+                "exit",
+                "quit",
+                "q",
+            }:
+
+                print(
+                    "\nExiting retriever..."
+                )
+
+                break
 
             # ------------------------------------------------
             # Empty query
@@ -529,46 +468,85 @@ def terminal_search():
                 continue
 
             # ------------------------------------------------
-            # Exit
-            # ------------------------------------------------
-
-            if query.lower() in [
-                "exit",
-                "quit",
-                "q"
-            ]:
-
-                print(
-                    "\nExiting retriever..."
-                )
-
-                break
-
-            # ------------------------------------------------
-            # Perform retrieval
+            # Search
             # ------------------------------------------------
 
             print(
                 "\nSearching..."
             )
 
-            results = retriever.retrieve_with_scores(
+            results = retriever.search_with_scores(
                 query=query,
-                top_k=5
+                top_k=5,
             )
+
+            # ------------------------------------------------
+            # No results
+            # ------------------------------------------------
+
+            if not results:
+
+                print(
+                    "\nNo relevant results found."
+                )
+
+                continue
 
             # ------------------------------------------------
             # Display results
             # ------------------------------------------------
 
-            retriever.display_scored_results(
-                results
-            )
+            print()
+            print("=" * 70)
+            print("TOP RETRIEVED CHUNKS")
+            print("=" * 70)
+
+            for index, (document, score) in enumerate(
+                results,
+                start=1,
+            ):
+
+                print()
+                print("-" * 70)
+                print(f"RESULT {index}")
+                print("-" * 70)
+
+                print(
+                    f"Distance: {score:.6f}"
+                )
+
+                print()
+                print("CONTENT:")
+                print(
+                    document.page_content
+                )
+
+                print()
+                print("METADATA:")
+
+                if document.metadata:
+
+                    for key, value in (
+                        document.metadata.items()
+                    ):
+
+                        print(
+                            f"  {key}: {value}"
+                        )
+
+                else:
+
+                    print(
+                        "  No metadata available."
+                    )
+
+            print()
+            print("=" * 70)
 
         except KeyboardInterrupt:
 
             print(
-                "\n\nProgram stopped."
+                "\n\nExiting retriever..."
             )
 
             break
@@ -586,4 +564,4 @@ def terminal_search():
 
 if __name__ == "__main__":
 
-    terminal_search()
+    terminal_test()
