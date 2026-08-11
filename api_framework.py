@@ -29,7 +29,7 @@ Open:
     http://127.0.0.1:8000/docs
 
 Self-test:
-    python member1_api_framework.py
+    python api_framework.py
 """
 
 from __future__ import annotations
