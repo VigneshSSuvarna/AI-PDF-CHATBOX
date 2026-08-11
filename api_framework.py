@@ -16,7 +16,7 @@ Responsibilities:
     - Provide Swagger API documentation
 
 Current integrations:
-    - Week 2 Retriever -> CONNECTED
+    - Retriever -> CONNECTED
     - Member 2 Prompt Engineering -> integration point
     - Member 3 Conversation Memory -> integration point
     - Member 4 LLM Integration -> integration point
