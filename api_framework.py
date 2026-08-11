@@ -67,6 +67,12 @@ from pydantic import BaseModel, Field
 
 from retriever import Retriever
 
+from memory import (
+    get_history_text,
+    add_user_message,
+    add_assistant_message,
+)
+
 
 # ============================================================
 # CONFIGURATION
@@ -283,33 +289,46 @@ def get_recent_history(
     limit: int = HISTORY_LIMIT,
 ) -> list[dict[str, str]]:
     """
-    Member 3 integration point.
+    Member 3 conversation memory integration.
 
-    This will eventually return the last five messages
-    for the requested conversation.
-
-    Expected format:
-
-        [
-            {
-                "role": "user",
-                "content": "What is RAG?"
-            },
-            {
-                "role": "assistant",
-                "content": "RAG stands for..."
-            }
-        ]
+    Returns the recent conversation history in the format
+    expected by the prompt builder.
     """
 
-    # --------------------------------------------------------
-    # TODO:
-    # Replace this with Member 3's memory implementation.
-    # --------------------------------------------------------
-
-    raise NotImplementedError(
-        "Member 3: implement conversation history lookup."
+    history_text = get_history_text(
+        session_id
     )
+
+    if not history_text:
+        return []
+
+    history = []
+
+    for line in history_text.splitlines():
+
+        if line.startswith("User: "):
+
+            history.append(
+                {
+                    "role": "user",
+                    "content": line[
+                        len("User: "):
+                    ],
+                }
+            )
+
+        elif line.startswith("Assistant: "):
+
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": line[
+                        len("Assistant: "):
+                    ],
+                }
+            )
+
+    return history[-limit:]
 
 
 # ============================================================
@@ -816,6 +835,11 @@ async def chat(
             req.message,
         )
 
+        add_user_message(
+            session_id=req.session_id,
+            content=req.message,
+        )
+        
         logger.info(
             "Prompt prepared for session %s",
             req.session_id,
