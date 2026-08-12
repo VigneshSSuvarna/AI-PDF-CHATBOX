@@ -47,7 +47,64 @@ import os
 from collections.abc import Generator
 
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
 # ============================================================
+# LOAD .ENV
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+
+ENV_FILE = BASE_DIR / ".env"
+
+load_dotenv(
+    dotenv_path=ENV_FILE,
+    override=False,
+)
+
+LLM_PROVIDER = os.getenv(
+    "LLM_PROVIDER",
+    "groq",
+).lower()
+
+GROQ_API_KEY = os.getenv(
+    "GROQ_API_KEY"
+)
+
+GROQ_MODEL = os.getenv(
+    "GROQ_MODEL",
+    "llama-3.3-70b-versatile",
+)
+
+GEMINI_API_KEY = os.getenv(
+    "GEMINI_API_KEY"
+)
+
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+)
+
+print("========================================")
+print("LLM CONFIGURATION")
+print("========================================")
+print("LLM_PROVIDER:", LLM_PROVIDER)
+print(
+    "GROQ_API_KEY:",
+    "CONFIGURED" if GROQ_API_KEY else "NOT CONFIGURED"
+)
+print("GROQ_MODEL:", GROQ_MODEL)
+print(
+    "GEMINI_API_KEY:",
+    "CONFIGURED" if GEMINI_API_KEY else "NOT CONFIGURED"
+)
+print("GEMINI_MODEL:", GEMINI_MODEL)
+print("ENV FILE:", ENV_FILE)
+print("ENV EXISTS:", ENV_FILE.exists())
+print("========================================")
+#============================================================
 # CONFIGURATION
 # ============================================================
 
@@ -134,29 +191,22 @@ def validate_configuration() -> None:
 # GOOGLE GEMINI
 # ============================================================
 
-def _stream_gemini(
-    prompt: str,
-) -> Generator[str, None, None]:
-    """Stream response from Google Gemini."""
+from google import genai
 
-    from google import genai
+
+def _stream_gemini(prompt: str):
 
     client = genai.Client(
-        api_key=os.environ["GEMINI_API_KEY"]
+        api_key=GEMINI_API_KEY
     )
 
-    response = client.models.generate_content_stream(
-        model=MODELS["gemini"],
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
         contents=prompt,
-        config={
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
-        },
     )
 
-    for chunk in response:
-
-        if chunk.text:
-            yield chunk.text
+    if response.text:
+        yield response.text
 
 
 # ============================================================
