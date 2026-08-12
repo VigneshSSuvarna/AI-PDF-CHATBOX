@@ -73,6 +73,9 @@ from memory import (
     add_assistant_message,
 )
 
+from llm import (
+    stream_llm_response as llm_stream_response,
+)
 
 # ============================================================
 # CONFIGURATION
@@ -493,41 +496,77 @@ Answer:
 
     return prompt.strip()
 
-
 # ============================================================
 # MEMBER 4 - LLM INTEGRATION
 # ============================================================
 
-async def stream_llm_response(
+async def stream_api_response(
     prompt: str,
+    session_id: str,
 ) -> AsyncIterator[str]:
     """
-    Member 4 integration point.
+    Connect Member 1 API framework to Member 4 LLM.
 
-    This function will eventually call OpenAI, Gemini,
-    Claude, Groq, etc. and stream the response.
+    Flow:
 
-    Expected output format:
-
-        data: token
-
-        data: token
-
-        data: [DONE]
+        Prompt
+          ↓
+        llm.py
+          ↓
+        Groq / Gemini / Claude
+          ↓
+        Stream response
+          ↓
+        Save complete answer to memory
     """
 
-    # --------------------------------------------------------
-    # TEMPORARY DEVELOPMENT RESPONSE
-    #
-    # Remove this once Member 4 connects the actual LLM.
-    # --------------------------------------------------------
+    full_response = ""
 
-    yield (
-        "data: LLM integration is not connected yet. "
-        "Retrieved context was successfully prepared.\n\n"
-    )
+    try:
 
-    yield "data: [DONE]\n\n"
+        for chunk in llm_stream_response(prompt):
+
+            if not chunk:
+                continue
+
+            full_response += chunk
+
+            yield (
+                f"data: {chunk}\n\n"
+            )
+
+        # ----------------------------------------------------
+        # Save the complete assistant response
+        # AFTER streaming is finished.
+        # ----------------------------------------------------
+
+        if full_response.strip():
+
+            add_assistant_message(
+                session_id=session_id,
+                content=full_response.strip(),
+            )
+
+            logger.info(
+                "Assistant response saved to memory "
+                "for session %s",
+                session_id,
+            )
+
+        yield "data: [DONE]\n\n"
+
+    except Exception as error:
+
+        logger.exception(
+            "LLM streaming failed."
+        )
+
+        yield (
+            "data: Sorry, the AI service is "
+            "temporarily unavailable.\n\n"
+        )
+
+        yield "data: [DONE]\n\n"
 
 
 # ============================================================
@@ -772,7 +811,6 @@ async def upload_document(
 # ============================================================
 # CHAT ENDPOINT
 # ============================================================
-
 @app.post(
     "/chat",
     responses={
@@ -790,25 +828,27 @@ async def chat(
 
     Pipeline:
 
-        Question
-            ↓
+        User Question
+             ↓
         Conversation Memory
-            ↓
+             ↓
         Retriever
-            ↓
+             ↓
         Retrieved Context
-            ↓
-        Prompt
-            ↓
+             ↓
+        Prompt Builder
+             ↓
         LLM
-            ↓
+             ↓
         Streaming Response
+             ↓
+        Assistant Memory
     """
 
     try:
 
         # ----------------------------------------------------
-        # 1. Conversation memory
+        # 1. Get previous conversation history
         # ----------------------------------------------------
 
         history = get_recent_history(
@@ -817,7 +857,7 @@ async def chat(
         )
 
         # ----------------------------------------------------
-        # 2. Retrieve relevant chunks
+        # 2. Retrieve relevant PDF chunks
         # ----------------------------------------------------
 
         context_chunks = retrieve_context(
@@ -826,7 +866,7 @@ async def chat(
         )
 
         # ----------------------------------------------------
-        # 3. Build prompt
+        # 3. Build final RAG prompt
         # ----------------------------------------------------
 
         prompt = build_prompt(
@@ -835,11 +875,18 @@ async def chat(
             req.message,
         )
 
+        # ----------------------------------------------------
+        # 4. Save current user message
+        #
+        # We save it AFTER building the prompt so that the
+        # current question isn't duplicated in history.
+        # ----------------------------------------------------
+
         add_user_message(
             session_id=req.session_id,
             content=req.message,
         )
-        
+
         logger.info(
             "Prompt prepared for session %s",
             req.session_id,
@@ -869,14 +916,16 @@ async def chat(
         ) from error
 
     # --------------------------------------------------------
-    # 4. Stream LLM response
+    # 5. Send prompt to actual LLM
     # --------------------------------------------------------
 
     return StreamingResponse(
-        stream_llm_response(prompt),
+        stream_api_response(
+            prompt,
+            req.session_id,
+        ),
         media_type="text/event-stream",
     )
-
 
 # ============================================================
 # GLOBAL ERROR HANDLER
