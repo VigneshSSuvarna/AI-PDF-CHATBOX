@@ -1,12 +1,11 @@
 """
-llm_integration.py
+llm.py
 ==================
 
 Member 4: LLM Integration
 
 Supports:
     - Google Gemini
-    - Anthropic Claude
     - Groq
 
 Responsibilities:
@@ -28,13 +27,10 @@ Member 4 does NOT handle:
 
 Environment variables:
 
-    LLM_PROVIDER=groq
+    LLM_PROVIDER=gemini  # Switched default to gemini
 
     GEMINI_API_KEY=...
     GEMINI_MODEL=gemini-2.5-flash
-
-    ANTHROPIC_API_KEY=...
-    CLAUDE_MODEL=claude-sonnet-4-20250514
 
     GROQ_API_KEY=...
     GROQ_MODEL=llama-3.3-70b-versatile
@@ -45,7 +41,6 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Generator
-
 
 from pathlib import Path
 
@@ -65,9 +60,10 @@ load_dotenv(
     override=False,
 )
 
+# 🔥 FIX: Changed default to "gemini"
 LLM_PROVIDER = os.getenv(
     "LLM_PROVIDER",
-    "groq",
+    "gemini",
 ).lower()
 
 GROQ_API_KEY = os.getenv(
@@ -85,6 +81,7 @@ GEMINI_API_KEY = os.getenv(
 
 GEMINI_MODEL = os.getenv(
     "GEMINI_MODEL",
+    "gemini-2.5-flash",
 )
 
 print("========================================")
@@ -104,23 +101,21 @@ print("GEMINI_MODEL:", GEMINI_MODEL)
 print("ENV FILE:", ENV_FILE)
 print("ENV EXISTS:", ENV_FILE.exists())
 print("========================================")
+
 #============================================================
 # CONFIGURATION
 # ============================================================
 
+# 🔥 FIX: Changed default to "gemini" here as well
 PROVIDER = os.getenv(
     "LLM_PROVIDER",
-    "groq",
+    "gemini",
 ).strip().lower()
 
 MODELS = {
     "gemini": os.getenv(
         "GEMINI_MODEL",
         "gemini-2.5-flash",
-    ),
-    "claude": os.getenv(
-        "CLAUDE_MODEL",
-        "claude-sonnet-4-20250514",
     ),
     "groq": os.getenv(
         "GROQ_MODEL",
@@ -154,7 +149,6 @@ logger = logging.getLogger("llm_integration")
 
 SUPPORTED_PROVIDERS = {
     "gemini",
-    "claude",
     "groq",
 }
 
@@ -175,7 +169,6 @@ def validate_configuration() -> None:
 
     key_names = {
         "gemini": "GEMINI_API_KEY",
-        "claude": "ANTHROPIC_API_KEY",
         "groq": "GROQ_API_KEY",
     }
 
@@ -194,50 +187,56 @@ def validate_configuration() -> None:
 from google import genai
 
 
-def _stream_gemini(prompt: str):
+def _stream_gemini(
+    prompt: str,
+) -> Generator[str, None, None]:
+    """
+    Stream response from Google Gemini.
+
+    NOTE: The google-genai SDK's generate_content() is NOT a
+    streaming call here — it returns the full response in one
+    shot. We yield it as a single chunk once it's ready.
+    """
 
     client = genai.Client(
         api_key=GEMINI_API_KEY
     )
 
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Gemini API call failed for model "
+            f"'{GEMINI_MODEL}': {error}"
+        ) from error
 
     if response.text:
         yield response.text
+        return
 
+    finish_reason = None
+    safety_ratings = None
 
-# ============================================================
-# ANTHROPIC CLAUDE
-# ============================================================
+    if getattr(response, "candidates", None):
+        candidate = response.candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        safety_ratings = getattr(candidate, "safety_ratings", None)
 
-def _stream_claude(
-    prompt: str,
-) -> Generator[str, None, None]:
-    """Stream response from Anthropic Claude."""
+    prompt_feedback = getattr(response, "prompt_feedback", None)
 
-    from anthropic import Anthropic
-
-    client = Anthropic(
-        api_key=os.environ["ANTHROPIC_API_KEY"]
+    raise RuntimeError(
+        "Gemini returned no text. "
+        f"model='{GEMINI_MODEL}', "
+        f"finish_reason={finish_reason}, "
+        f"prompt_feedback={prompt_feedback}, "
+        f"safety_ratings={safety_ratings}. "
+        "Check that GEMINI_MODEL is a valid, currently "
+        "supported model name and that the prompt was not "
+        "blocked by safety filters."
     )
-
-    with client.messages.stream(
-        model=MODELS["claude"],
-        max_tokens=MAX_OUTPUT_TOKENS,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-    ) as stream:
-
-        for text in stream.text_stream:
-            if text:
-                yield text
 
 
 # ============================================================
@@ -317,10 +316,6 @@ def stream_llm_response(
 
             yield from _stream_gemini(prompt)
 
-        elif PROVIDER == "claude":
-
-            yield from _stream_claude(prompt)
-
         elif PROVIDER == "groq":
 
             yield from _stream_groq(prompt)
@@ -333,8 +328,8 @@ def stream_llm_response(
         )
 
         yield (
-            "\n\nSorry, the AI service is "
-            "temporarily unavailable."
+            f"\n\nSorry, the AI service is temporarily "
+            f"unavailable. ({exc})"
         )
 
 
@@ -384,25 +379,3 @@ Answer using the provided context.
 """
 
     print("\nAI Response:")
-    print("-" * 65)
-
-    for text in stream_llm_response(test_prompt):
-
-        print(
-            text,
-            end="",
-            flush=True,
-        )
-
-    print("\n")
-    print("=" * 65)
-    print("TEST COMPLETED")
-    print("=" * 65)
-
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
-
-if __name__ == "__main__":
-    _run_test()
