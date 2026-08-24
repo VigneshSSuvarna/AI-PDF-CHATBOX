@@ -27,7 +27,7 @@ Member 4 does NOT handle:
 
 Environment variables:
 
-    LLM_PROVIDER=gemini  # Switched default to gemini
+    LLM_PROVIDER=gemini
 
     GEMINI_API_KEY=...
     GEMINI_MODEL=gemini-2.5-flash
@@ -41,7 +41,6 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Generator
-
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -60,11 +59,16 @@ load_dotenv(
     override=False,
 )
 
-# 🔥 FIX: Changed default to "gemini"
+
+# ============================================================
+# PROVIDER CONFIGURATION
+# ============================================================
+
 LLM_PROVIDER = os.getenv(
     "LLM_PROVIDER",
     "gemini",
 ).lower()
+
 
 GROQ_API_KEY = os.getenv(
     "GROQ_API_KEY"
@@ -75,6 +79,7 @@ GROQ_MODEL = os.getenv(
     "llama-3.3-70b-versatile",
 )
 
+
 GEMINI_API_KEY = os.getenv(
     "GEMINI_API_KEY"
 )
@@ -84,44 +89,75 @@ GEMINI_MODEL = os.getenv(
     "gemini-2.5-flash",
 )
 
+
 print("========================================")
 print("LLM CONFIGURATION")
 print("========================================")
-print("LLM_PROVIDER:", LLM_PROVIDER)
+
+print(
+    "LLM_PROVIDER:",
+    LLM_PROVIDER
+)
+
 print(
     "GROQ_API_KEY:",
-    "CONFIGURED" if GROQ_API_KEY else "NOT CONFIGURED"
+    "CONFIGURED"
+    if GROQ_API_KEY
+    else "NOT CONFIGURED"
 )
-print("GROQ_MODEL:", GROQ_MODEL)
+
+print(
+    "GROQ_MODEL:",
+    GROQ_MODEL
+)
+
 print(
     "GEMINI_API_KEY:",
-    "CONFIGURED" if GEMINI_API_KEY else "NOT CONFIGURED"
+    "CONFIGURED"
+    if GEMINI_API_KEY
+    else "NOT CONFIGURED"
 )
-print("GEMINI_MODEL:", GEMINI_MODEL)
-print("ENV FILE:", ENV_FILE)
-print("ENV EXISTS:", ENV_FILE.exists())
+
+print(
+    "GEMINI_MODEL:",
+    GEMINI_MODEL
+)
+
+print(
+    "ENV FILE:",
+    ENV_FILE
+)
+
+print(
+    "ENV EXISTS:",
+    ENV_FILE.exists()
+)
+
 print("========================================")
 
-#============================================================
+
+# ============================================================
 # CONFIGURATION
 # ============================================================
 
-# 🔥 FIX: Changed default to "gemini" here as well
 PROVIDER = os.getenv(
     "LLM_PROVIDER",
     "gemini",
 ).strip().lower()
+
 
 MODELS = {
     "gemini": os.getenv(
         "GEMINI_MODEL",
         "gemini-2.5-flash",
     ),
+
     "groq": os.getenv(
         "GROQ_MODEL",
         "llama-3.3-70b-versatile",
     ),
 }
+
 
 MAX_OUTPUT_TOKENS = int(
     os.getenv(
@@ -137,10 +173,16 @@ MAX_OUTPUT_TOKENS = int(
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+    format=(
+        "%(asctime)s | "
+        "%(levelname)s | "
+        "%(message)s"
+    ),
 )
 
-logger = logging.getLogger("llm_integration")
+logger = logging.getLogger(
+    "llm_integration"
+)
 
 
 # ============================================================
@@ -157,12 +199,14 @@ def validate_configuration() -> None:
     """Validate the selected provider and API key."""
 
     if PROVIDER not in SUPPORTED_PROVIDERS:
+
         raise ValueError(
             f"Unsupported LLM_PROVIDER='{PROVIDER}'. "
             f"Choose from: {sorted(SUPPORTED_PROVIDERS)}"
         )
 
     if MAX_OUTPUT_TOKENS <= 0:
+
         raise ValueError(
             "LLM_MAX_OUTPUT_TOKENS must be greater than 0."
         )
@@ -175,6 +219,7 @@ def validate_configuration() -> None:
     key_name = key_names[PROVIDER]
 
     if not os.getenv(key_name):
+
         raise RuntimeError(
             f"{key_name} is not configured."
         )
@@ -191,11 +236,14 @@ def _stream_gemini(
     prompt: str,
 ) -> Generator[str, None, None]:
     """
-    Stream response from Google Gemini.
+    Send the final prompt to Google Gemini.
 
-    NOTE: The google-genai SDK's generate_content() is NOT a
-    streaming call here — it returns the full response in one
-    shot. We yield it as a single chunk once it's ready.
+    Gemini is allowed to use:
+        1. Retrieved PDF information
+        2. Knowledge-base information
+        3. General pretrained knowledge
+
+    The uploaded PDF is not treated as a restriction.
     """
 
     client = genai.Client(
@@ -203,29 +251,58 @@ def _stream_gemini(
     )
 
     try:
+
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=prompt,
         )
+
     except Exception as error:
+
         raise RuntimeError(
             f"Gemini API call failed for model "
             f"'{GEMINI_MODEL}': {error}"
         ) from error
 
+
     if response.text:
+
         yield response.text
+
         return
 
+
     finish_reason = None
+
     safety_ratings = None
 
-    if getattr(response, "candidates", None):
-        candidate = response.candidates[0]
-        finish_reason = getattr(candidate, "finish_reason", None)
-        safety_ratings = getattr(candidate, "safety_ratings", None)
+    if getattr(
+        response,
+        "candidates",
+        None,
+    ):
 
-    prompt_feedback = getattr(response, "prompt_feedback", None)
+        candidate = response.candidates[0]
+
+        finish_reason = getattr(
+            candidate,
+            "finish_reason",
+            None,
+        )
+
+        safety_ratings = getattr(
+            candidate,
+            "safety_ratings",
+            None,
+        )
+
+
+    prompt_feedback = getattr(
+        response,
+        "prompt_feedback",
+        None,
+    )
+
 
     raise RuntimeError(
         "Gemini returned no text. "
@@ -246,7 +323,9 @@ def _stream_gemini(
 def _stream_groq(
     prompt: str,
 ) -> Generator[str, None, None]:
-    """Stream response from Groq."""
+    """
+    Stream response from Groq.
+    """
 
     from groq import Groq
 
@@ -254,21 +333,36 @@ def _stream_groq(
         api_key=os.environ["GROQ_API_KEY"]
     )
 
+
     stream = client.chat.completions.create(
         model=MODELS["groq"],
+
         messages=[
             {
                 "role": "user",
                 "content": prompt,
             }
         ],
+
         max_tokens=MAX_OUTPUT_TOKENS,
+
         stream=True,
     )
 
+
     for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+
+        if (
+            chunk.choices
+            and chunk.choices[0].delta
+            and chunk.choices[0].delta.content
+        ):
+
+            yield (
+                chunk.choices[0]
+                .delta
+                .content
+            )
 
 
 # ============================================================
@@ -279,30 +373,55 @@ def stream_llm_response(
     prompt: str,
 ) -> Generator[str, None, None]:
     """
-    Main interface used by Member 1.
+    Main LLM interface.
 
-    The rest of the application only needs:
+    IMPORTANT:
 
-        stream_llm_response(prompt)
+    The LLM is NOT restricted to retrieved context.
 
-    The selected provider is handled internally.
+    It can answer using:
+
+        1. PDF context
+        2. Knowledge-base context
+        3. General pretrained knowledge
+
+    The actual source-selection instructions are supplied
+    by api_framework.py through the final prompt.
     """
 
-    if not isinstance(prompt, str):
+    # --------------------------------------------------------
+    # Validate prompt
+    # --------------------------------------------------------
+
+    if not isinstance(
+        prompt,
+        str,
+    ):
+
         raise ValueError(
             "Prompt must be a string."
         )
 
+
     prompt = prompt.strip()
 
+
     if not prompt:
+
         raise ValueError(
             "Prompt cannot be empty."
         )
 
+
+    # --------------------------------------------------------
+    # Validate provider
+    # --------------------------------------------------------
+
     validate_configuration()
 
+
     model = MODELS[PROVIDER]
+
 
     logger.info(
         "LLM request | provider=%s | model=%s",
@@ -310,15 +429,35 @@ def stream_llm_response(
         model,
     )
 
+
+    # --------------------------------------------------------
+    # IMPORTANT
+    #
+    # Do NOT add:
+    #
+    # "Answer only using the provided context."
+    #
+    # because that would prevent general knowledge answers.
+    #
+    # The final prompt created by api_framework.py already
+    # contains the source-selection rules.
+    # --------------------------------------------------------
+
     try:
 
         if PROVIDER == "gemini":
 
-            yield from _stream_gemini(prompt)
+            yield from _stream_gemini(
+                prompt
+            )
+
 
         elif PROVIDER == "groq":
 
-            yield from _stream_groq(prompt)
+            yield from _stream_groq(
+                prompt
+            )
+
 
     except Exception as exc:
 
@@ -328,8 +467,9 @@ def stream_llm_response(
         )
 
         yield (
-            f"\n\nSorry, the AI service is temporarily "
-            f"unavailable. ({exc})"
+            "\n\nSorry, the AI service is "
+            "temporarily unavailable. "
+            f"({exc})"
         )
 
 
@@ -338,7 +478,9 @@ def stream_llm_response(
 # ============================================================
 
 def get_llm_info() -> dict[str, str]:
-    """Return current provider configuration."""
+    """
+    Return current provider configuration.
+    """
 
     return {
         "provider": PROVIDER,
@@ -351,21 +493,47 @@ def get_llm_info() -> dict[str, str]:
 # ============================================================
 
 def _run_test() -> None:
-    """Test the currently selected LLM provider."""
+    """
+    Test the currently selected LLM provider.
+    """
 
     print("=" * 65)
-    print("LLM INTEGRATION TEST")
+
+    print(
+        "LLM INTEGRATION TEST"
+    )
+
     print("=" * 65)
+
 
     validate_configuration()
 
+
     info = get_llm_info()
 
-    print(f"Provider : {info['provider']}")
-    print(f"Model    : {info['model']}")
+
+    print(
+        f"Provider : {info['provider']}"
+    )
+
+    print(
+        f"Model    : {info['model']}"
+    )
+
 
     test_prompt = """
-You are answering a question in an AI PDF Chatbox.
+You are VYPER, a professional AI assistant.
+
+You have access to retrieved context, but retrieved
+context is not a restriction on your knowledge.
+
+If the context contains the answer, use it.
+
+If the context does not contain the answer and the
+question is a general knowledge question, use your
+general pretrained knowledge.
+
+Do not invent facts.
 
 Context:
 Artificial Intelligence is the field of computer
@@ -373,9 +541,37 @@ science concerned with creating systems capable of
 performing tasks that normally require human intelligence.
 
 Question:
-What is Artificial Intelligence?
+What is an LLM?
 
-Answer using the provided context.
+Answer:
 """
 
-    print("\nAI Response:")
+
+    print(
+        "\nAI Response:"
+    )
+
+
+    for chunk in stream_llm_response(
+        test_prompt
+    ):
+
+        print(
+            chunk,
+            end="",
+            flush=True,
+        )
+
+
+    print(
+        "\n"
+    )
+
+
+# ============================================================
+# PROGRAM ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+
+    _run_test()

@@ -447,35 +447,41 @@ def retrieve_context(
 # ============================================================
 # MEMBER 2 - PROMPT ENGINEERING
 # ============================================================
-
 def build_prompt(
     context_chunks: list[str],
     history: list[dict[str, str]],
     question: str,
 ) -> str:
     """
-    Member 2 integration point.
+    Build the final prompt using both:
 
-    The final version should use a strict RAG prompt that:
+        1. Retrieved PDF/document context
+        2. General LLM knowledge
 
-        1. Uses only retrieved context.
-        2. Uses conversation history for follow-up questions.
-        3. Does not invent information.
-        4. Says "I don't know" when the answer is not
-           present in the retrieved context.
-        5. Includes source information where appropriate.
+    Behavior:
+        - PDF information is prioritized when relevant.
+        - General knowledge can be used when the PDF does not
+          contain the answer.
+        - The assistant must not claim general knowledge came
+          from the uploaded document.
+        - The assistant must not invent information.
+        - Conversation history is used for follow-up questions.
     """
 
     # --------------------------------------------------------
-    # TEMPORARY DEVELOPMENT PROMPT
-    #
-    # This allows us to test the API/retriever connection
-    # before Member 2 finishes the final prompt.
+    # DOCUMENT CONTEXT
     # --------------------------------------------------------
 
     context = "\n\n".join(
         context_chunks
     )
+
+    if not context.strip():
+        context = "No relevant information was found in the uploaded documents."
+
+    # --------------------------------------------------------
+    # CONVERSATION HISTORY
+    # --------------------------------------------------------
 
     history_text = "\n".join(
         f"{message.get('role', 'user')}: "
@@ -483,27 +489,65 @@ def build_prompt(
         for message in history
     )
 
+    if not history_text.strip():
+        history_text = "No previous conversation."
+
+    # --------------------------------------------------------
+    # FINAL PROMPT
+    # --------------------------------------------------------
+
     prompt = f"""
-You are an AI assistant that answers questions using
-retrieved document context.
+You are an intelligent AI assistant that can answer questions
+using both uploaded PDF documents and your general knowledge.
 
-Use the retrieved context to answer the question.
+You have two sources of information:
 
-If the answer cannot be found in the context,
-say that you do not know.
+1. DOCUMENT CONTEXT
+   Information retrieved from the user's uploaded PDF.
 
-Do not invent facts.
+2. GENERAL KNOWLEDGE
+   Your existing knowledge as a language model.
 
-Conversation history:
-{history_text}
+Follow these rules:
 
-Retrieved context:
+1. If the answer is available in the document context,
+   prioritize the document information.
+
+2. If the document contains relevant information,
+   use the document as the primary source.
+
+3. If the document does not contain the answer,
+   you may answer using your general knowledge.
+
+4. Do NOT say "I don't know" merely because the answer
+   is not present in the uploaded PDF.
+
+5. If the question is unrelated to the uploaded PDF,
+   answer normally using your general knowledge.
+
+6. If the question requires information from both the
+   uploaded PDF and general knowledge, combine both sources
+   into a useful and accurate answer.
+
+7. Never claim that general knowledge came from the PDF.
+
+8. Never invent, fabricate, or hallucinate facts.
+
+9. Use conversation history to understand follow-up questions.
+
+10. If you genuinely do not know the answer, clearly say
+    that you do not know.
+
+DOCUMENT CONTEXT:
 {context}
 
-Current question:
+CONVERSATION HISTORY:
+{history_text}
+
+USER QUESTION:
 {question}
 
-Answer:
+ANSWER:
 """
 
     return prompt.strip()
