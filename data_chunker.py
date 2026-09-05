@@ -1,6 +1,18 @@
 import os
 import pickle
+import sys
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# ---------------------------------------------------
+# FIX WINDOWS CP1252 UNICODE / CHARMAP ENCODING
+# ---------------------------------------------------
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # ---------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------
@@ -16,7 +28,7 @@ CHUNK_OVERLAP = 200
 # THE CHUNKING ENGINE
 # ---------------------------------------------------
 def split_documents(documents):
-    print(f"🔪 Initializing Text Splitter (Size: {CHUNK_SIZE}, Overlap: {CHUNK_OVERLAP})...")
+    print(f"[CHUNKER] Initializing Text Splitter (Size: {CHUNK_SIZE}, Overlap: {CHUNK_OVERLAP})...")
     
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -28,24 +40,24 @@ def split_documents(documents):
     # Perform the splitting
     chunked_docs = text_splitter.split_documents(documents)
     
-    print(f"✅ Successfully sliced {len(documents)} pages into {len(chunked_docs)} individual chunks.")
+    print(f"[SUCCESS] Sliced {len(documents)} pages into {len(chunked_docs)} individual chunks.")
     return chunked_docs
 
 # ---------------------------------------------------
 # EXECUTION BLOCK
 # ---------------------------------------------------
 if __name__ == "__main__":
-    print("==================================================")
-    print("🧩 PHASE 3: TEXT CHUNKING PIPELINE")
-    print("==================================================")
+    print("=" * 50)
+    print("PHASE 3: TEXT CHUNKING PIPELINE")
+    print("=" * 50)
     
     # 1. Verify the Cleaned File exists
     if not os.path.exists(INPUT_FILE):
-        print(f"❌ ERROR: Cannot find '{INPUT_FILE}'. Please run 'data_cleaner.py' first!")
-        exit()
+        print(f"[ERROR] Cannot find '{INPUT_FILE}'. Please run 'data_cleaner.py' first!")
+        sys.exit(1)
 
     # 2. Load the pristine data
-    print("📥 Loading Cleaned Knowledge Base...")
+    print("Loading Cleaned Knowledge Base...")
     with open(INPUT_FILE, "rb") as f:
         cleaned_documents = pickle.load(f)
 
@@ -57,13 +69,13 @@ if __name__ == "__main__":
     with open(OUTPUT_FILE, "wb") as f:
         pickle.dump(chunked_documents, f)
 
-    print(f"\n💾 Chunked Knowledge Base safely stored at: '{OUTPUT_FILE}'")
+    print(f"\n[SAVED] Chunked Knowledge Base safely stored at: '{OUTPUT_FILE}'")
     
     # 5. Proof of Work (Check the first chunk)
     if chunked_documents:
-        print("\n==================================================")
-        print("🔍 QUALITY ASSURANCE PREVIEW (Chunk #1)")
-        print("==================================================")
+        print("\n" + "=" * 50)
+        print("QUALITY ASSURANCE PREVIEW (Chunk #1)")
+        print("=" * 50)
         print(f"Length: {len(chunked_documents[0].page_content)} characters")
         print(f"Source: {chunked_documents[0].metadata.get('source', 'Unknown')}")
         print("Content:")
