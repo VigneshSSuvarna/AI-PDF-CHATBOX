@@ -7,6 +7,7 @@ Member 4: LLM Integration
 Supports:
     - Google Gemini
     - Groq
+    - Ollama (Local)
 
 Responsibilities:
     - Receive the final RAG prompt
@@ -27,19 +28,24 @@ Member 4 does NOT handle:
 
 Environment variables:
 
-    LLM_PROVIDER=gemini
+    LLM_PROVIDER=ollama
 
     GEMINI_API_KEY=...
     GEMINI_MODEL=gemini-2.5-flash
 
     GROQ_API_KEY=...
     GROQ_MODEL=llama-3.3-70b-versatile
+    
+    OLLAMA_MODEL=llama3
+    OLLAMA_BASE_URL=http://localhost:11434
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import requests
 from collections.abc import Generator
 from pathlib import Path
 
@@ -69,7 +75,6 @@ LLM_PROVIDER = os.getenv(
     "gemini",
 ).lower()
 
-
 GROQ_API_KEY = os.getenv(
     "GROQ_API_KEY"
 )
@@ -78,7 +83,6 @@ GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
     "llama-3.3-70b-versatile",
 )
-
 
 GEMINI_API_KEY = os.getenv(
     "GEMINI_API_KEY"
@@ -89,49 +93,39 @@ GEMINI_MODEL = os.getenv(
     "gemini-2.5-flash",
 )
 
+OLLAMA_MODEL = os.getenv(
+    "OLLAMA_MODEL",
+    "llama3",
+)
+
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL",
+    "http://localhost:11434",
+)
 
 print("========================================")
 print("LLM CONFIGURATION")
 print("========================================")
 
-print(
-    "LLM_PROVIDER:",
-    LLM_PROVIDER
-)
+print("LLM_PROVIDER:", LLM_PROVIDER)
 
 print(
     "GROQ_API_KEY:",
-    "CONFIGURED"
-    if GROQ_API_KEY
-    else "NOT CONFIGURED"
+    "CONFIGURED" if GROQ_API_KEY else "NOT CONFIGURED"
 )
-
-print(
-    "GROQ_MODEL:",
-    GROQ_MODEL
-)
+print("GROQ_MODEL:", GROQ_MODEL)
 
 print(
     "GEMINI_API_KEY:",
-    "CONFIGURED"
-    if GEMINI_API_KEY
-    else "NOT CONFIGURED"
+    "CONFIGURED" if GEMINI_API_KEY else "NOT CONFIGURED"
 )
+print("GEMINI_MODEL:", GEMINI_MODEL)
 
-print(
-    "GEMINI_MODEL:",
-    GEMINI_MODEL
-)
+print("OLLAMA_MODEL:", OLLAMA_MODEL)
+print("OLLAMA_BASE_URL:", OLLAMA_BASE_URL)
 
-print(
-    "ENV FILE:",
-    ENV_FILE
-)
-
-print(
-    "ENV EXISTS:",
-    ENV_FILE.exists()
-)
+print("ENV FILE:", ENV_FILE)
+print("ENV EXISTS:", ENV_FILE.exists())
 
 print("========================================")
 
@@ -145,19 +139,20 @@ PROVIDER = os.getenv(
     "gemini",
 ).strip().lower()
 
-
 MODELS = {
     "gemini": os.getenv(
         "GEMINI_MODEL",
         "gemini-2.5-flash",
     ),
-
     "groq": os.getenv(
         "GROQ_MODEL",
         "llama-3.3-70b-versatile",
     ),
+    "ollama": os.getenv(
+        "OLLAMA_MODEL",
+        "llama3",
+    ),
 }
-
 
 MAX_OUTPUT_TOKENS = int(
     os.getenv(
@@ -192,6 +187,7 @@ logger = logging.getLogger(
 SUPPORTED_PROVIDERS = {
     "gemini",
     "groq",
+    "ollama",
 }
 
 
@@ -199,17 +195,19 @@ def validate_configuration() -> None:
     """Validate the selected provider and API key."""
 
     if PROVIDER not in SUPPORTED_PROVIDERS:
-
         raise ValueError(
             f"Unsupported LLM_PROVIDER='{PROVIDER}'. "
             f"Choose from: {sorted(SUPPORTED_PROVIDERS)}"
         )
 
     if MAX_OUTPUT_TOKENS <= 0:
-
         raise ValueError(
             "LLM_MAX_OUTPUT_TOKENS must be greater than 0."
         )
+
+    # Ollama is local and does not require an API key
+    if PROVIDER == "ollama":
+        return
 
     key_names = {
         "gemini": "GEMINI_API_KEY",
@@ -219,31 +217,64 @@ def validate_configuration() -> None:
     key_name = key_names[PROVIDER]
 
     if not os.getenv(key_name):
-
         raise RuntimeError(
             f"{key_name} is not configured."
         )
 
 
 # ============================================================
-# GOOGLE GEMINI
+# OLLAMA (LOCAL)
+# ============================================================
+
+def _stream_ollama(
+    prompt: str,
+) -> Generator[str, None, None]:
+    """
+    Stream response from a local Ollama instance.
+    Requires the Ollama app to be running.
+    """
+    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
+    payload = {
+        "model": MODELS["ollama"],
+        "prompt": prompt,
+        "stream": True,
+        "options": {
+            "num_predict": MAX_OUTPUT_TOKENS
+        }
+    }
+
+    try:
+        with requests.post(url, json=payload, stream=True) as response:
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    data = json.loads(line)
+                    if "response" in data:
+                        yield data["response"]
+                    if data.get("done"):
+                        break
+                        
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            f"Could not connect to Ollama at {OLLAMA_BASE_URL}. "
+            "Please ensure the Ollama application is running locally."
+        )
+    except Exception as error:
+        raise RuntimeError(f"Ollama generation failed: {error}")
+
+
+# ============================================================
+# GOOGLE GEMINI (OPTIMIZED TRUE STREAMING)
 # ============================================================
 
 from google import genai
-
 
 def _stream_gemini(
     prompt: str,
 ) -> Generator[str, None, None]:
     """
-    Send the final prompt to Google Gemini.
-
-    Gemini is allowed to use:
-        1. Retrieved PDF information
-        2. Knowledge-base information
-        3. General pretrained knowledge
-
-    The uploaded PDF is not treated as a restriction.
+    Stream response chunks directly from Google Gemini as they are generated.
+    Enables low-latency token-by-token streaming to the client.
     """
 
     client = genai.Client(
@@ -251,69 +282,28 @@ def _stream_gemini(
     )
 
     try:
-
-        response = client.models.generate_content(
+        response = client.models.generate_content_stream(
             model=GEMINI_MODEL,
             contents=prompt,
         )
 
-    except Exception as error:
+        has_yielded = False
+        for chunk in response:
+            if chunk.text:
+                has_yielded = True
+                yield chunk.text
 
+        if not has_yielded:
+            raise RuntimeError(
+                f"Gemini returned no text for model '{GEMINI_MODEL}'. "
+                "The response may have been empty or blocked by safety filters."
+            )
+
+    except Exception as error:
         raise RuntimeError(
-            f"Gemini API call failed for model "
+            f"Gemini API streaming failed for model "
             f"'{GEMINI_MODEL}': {error}"
         ) from error
-
-
-    if response.text:
-
-        yield response.text
-
-        return
-
-
-    finish_reason = None
-
-    safety_ratings = None
-
-    if getattr(
-        response,
-        "candidates",
-        None,
-    ):
-
-        candidate = response.candidates[0]
-
-        finish_reason = getattr(
-            candidate,
-            "finish_reason",
-            None,
-        )
-
-        safety_ratings = getattr(
-            candidate,
-            "safety_ratings",
-            None,
-        )
-
-
-    prompt_feedback = getattr(
-        response,
-        "prompt_feedback",
-        None,
-    )
-
-
-    raise RuntimeError(
-        "Gemini returned no text. "
-        f"model='{GEMINI_MODEL}', "
-        f"finish_reason={finish_reason}, "
-        f"prompt_feedback={prompt_feedback}, "
-        f"safety_ratings={safety_ratings}. "
-        "Check that GEMINI_MODEL is a valid, currently "
-        "supported model name and that the prompt was not "
-        "blocked by safety filters."
-    )
 
 
 # ============================================================
@@ -333,36 +323,25 @@ def _stream_groq(
         api_key=os.environ["GROQ_API_KEY"]
     )
 
-
     stream = client.chat.completions.create(
         model=MODELS["groq"],
-
         messages=[
             {
                 "role": "user",
                 "content": prompt,
             }
         ],
-
         max_tokens=MAX_OUTPUT_TOKENS,
-
         stream=True,
     )
 
-
     for chunk in stream:
-
         if (
             chunk.choices
             and chunk.choices[0].delta
             and chunk.choices[0].delta.content
         ):
-
-            yield (
-                chunk.choices[0]
-                .delta
-                .content
-            )
+            yield chunk.choices[0].delta.content
 
 
 # ============================================================
@@ -375,12 +354,8 @@ def stream_llm_response(
     """
     Main LLM interface.
 
-    IMPORTANT:
-
     The LLM is NOT restricted to retrieved context.
-
     It can answer using:
-
         1. PDF context
         2. Knowledge-base context
         3. General pretrained knowledge
@@ -397,21 +372,16 @@ def stream_llm_response(
         prompt,
         str,
     ):
-
         raise ValueError(
             "Prompt must be a string."
         )
 
-
     prompt = prompt.strip()
 
-
     if not prompt:
-
         raise ValueError(
             "Prompt cannot be empty."
         )
-
 
     # --------------------------------------------------------
     # Validate provider
@@ -419,9 +389,7 @@ def stream_llm_response(
 
     validate_configuration()
 
-
     model = MODELS[PROVIDER]
-
 
     logger.info(
         "LLM request | provider=%s | model=%s",
@@ -429,38 +397,23 @@ def stream_llm_response(
         model,
     )
 
-
-    # --------------------------------------------------------
-    # IMPORTANT
-    #
-    # Do NOT add:
-    #
-    # "Answer only using the provided context."
-    #
-    # because that would prevent general knowledge answers.
-    #
-    # The final prompt created by api_framework.py already
-    # contains the source-selection rules.
-    # --------------------------------------------------------
-
     try:
-
         if PROVIDER == "gemini":
-
             yield from _stream_gemini(
                 prompt
             )
 
-
         elif PROVIDER == "groq":
-
             yield from _stream_groq(
                 prompt
             )
 
+        elif PROVIDER == "ollama":
+            yield from _stream_ollama(
+                prompt
+            )
 
     except Exception as exc:
-
         logger.exception(
             "LLM request failed: %s",
             exc,
@@ -498,28 +451,21 @@ def _run_test() -> None:
     """
 
     print("=" * 65)
-
     print(
         "LLM INTEGRATION TEST"
     )
-
     print("=" * 65)
-
 
     validate_configuration()
 
-
     info = get_llm_info()
-
 
     print(
         f"Provider : {info['provider']}"
     )
-
     print(
         f"Model    : {info['model']}"
     )
-
 
     test_prompt = """
 You are VYPER, a professional AI assistant.
@@ -546,22 +492,18 @@ What is an LLM?
 Answer:
 """
 
-
     print(
         "\nAI Response:"
     )
 
-
     for chunk in stream_llm_response(
         test_prompt
     ):
-
         print(
             chunk,
             end="",
             flush=True,
         )
-
 
     print(
         "\n"
@@ -573,5 +515,4 @@ Answer:
 # ============================================================
 
 if __name__ == "__main__":
-
     _run_test()
