@@ -1,5 +1,5 @@
 import os
-import fitz
+import pymupdf
 import hashlib
 import pickle
 import re
@@ -49,7 +49,7 @@ def extract_pdf(pdf_path):
     URL_PATTERN = r"https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?"
     
     try:
-        pdf = fitz.open(pdf_path)
+        pdf = pymupdf.open(pdf_path)
         for page_num in range(len(pdf)):
             page = pdf.load_page(page_num)
             text = page.get_text("text")
