@@ -4,11 +4,24 @@ frontend/pages/sign_in.py
 
 import streamlit as st
 
+from auth_db import (
+    email_exists,
+    username_exists,
+    create_user,
+    authenticate_user,
+)
+
+
 st.set_page_config(
     page_title="Sign In - AI Chatbox",
     page_icon="🔐",
     layout="centered",
 )
+
+
+# =========================================================
+# STYLING
+# =========================================================
 
 st.markdown(
     """
@@ -21,7 +34,9 @@ st.markdown(
         font-family: 'Plus Jakarta Sans', sans-serif;
     }
 
-    header { display: none !important; }
+    header {
+        display: none !important;
+    }
 
     [data-testid="stSidebarNav"] {
         display: none !important;
@@ -50,6 +65,12 @@ st.markdown(
         margin-bottom: 2rem;
     }
 
+    .stTextInput > div > div > input {
+        background-color: #0d1117 !important;
+        color: white !important;
+        border: 1px solid #30363d !important;
+    }
+
     .stButton > button {
         width: 100% !important;
         border-radius: 8px !important;
@@ -67,52 +88,179 @@ st.markdown(
 )
 
 
-# ---------------------------------------------------------
-# Check whether Google user is already logged in
-# ---------------------------------------------------------
+# =========================================================
+# INITIALIZE SESSION VARIABLES
+# =========================================================
 
-if hasattr(st.user, "is_logged_in") and st.user.is_logged_in:
+if "username_authenticated" not in st.session_state:
+    st.session_state.username_authenticated = False
 
-    # Store Google account information in Streamlit session
-    st.session_state.user_name = (
-        getattr(st.user, "name", None)
-        or getattr(st.user, "given_name", None)
-        or "Google User"
+if "show_account_setup" not in st.session_state:
+    st.session_state.show_account_setup = False
+
+
+# =========================================================
+# GOOGLE LOGIN
+# DO NOT CHANGE THIS
+# =========================================================
+
+if not st.user.is_logged_in:
+
+    if st.button("⬅️ Back to Chat", use_container_width=False):
+        st.switch_page("app.py")
+
+    st.markdown(
+        """
+        <div class="auth-card">
+            <div class="auth-title">Welcome back</div>
+            <div class="auth-subtitle">
+                Sign in securely with your Google account
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.session_state.user_email = (
-        getattr(st.user, "email", None)
-        or getattr(st.user, "preferred_username", None)
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+
+        # YOUR EXISTING GOOGLE LOGIN
+        if st.button("Sign in with Google", type="primary"):
+            st.login()
+
+        st.caption(
+            "You will enter your Gmail password securely on Google's sign-in page."
+        )
+
+    st.stop()
+
+
+# =========================================================
+# GOOGLE USER INFORMATION
+# =========================================================
+
+google_email = (
+    getattr(st.user, "email", None)
+    or getattr(st.user, "preferred_username", None)
+)
+
+google_name = (
+    getattr(st.user, "name", None)
+    or getattr(st.user, "given_name", None)
+    or "Google User"
+)
+
+
+if not google_email:
+    st.error("Unable to retrieve your Google email address.")
+    st.stop()
+
+
+# =========================================================
+# CHECK IF THIS GOOGLE ACCOUNT ALREADY HAS A USERNAME
+# =========================================================
+
+has_account = email_exists(google_email)
+
+
+# =========================================================
+# NEW USER → CREATE USERNAME + PASSWORD
+# =========================================================
+
+if not has_account:
+
+    st.markdown(
+        """
+        <div class="auth-card">
+            <div class="auth-title">Create your account</div>
+            <div class="auth-subtitle">
+                Your Google account has been verified
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.session_state.user_role = "User"
-    st.session_state.is_authenticated = True
+    col1, col2, col3 = st.columns([1, 2, 1])
 
-    # Google OAuth gives us identity, not a JWT created by our backend.
-    # Keep this empty until backend authentication is added.
-    st.session_state.access_token = None
+    with col2:
 
-    st.switch_page("app.py")
+        st.info(f"Verified Google account: {google_email}")
+
+        username = st.text_input(
+            "Username",
+            placeholder="Choose a unique username",
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="Create your password",
+        )
+
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+            placeholder="Enter your password again",
+        )
+
+        if st.button("Create Account", type="primary"):
+
+            username = username.strip()
+
+            if not username:
+                st.error("Please enter a username.")
+
+            elif not password:
+                st.error("Please enter a password.")
+
+            elif len(username) < 3:
+                st.error("Username must contain at least 3 characters.")
+
+            elif password != confirm_password:
+                st.error("Passwords do not match.")
+
+            elif username_exists(username):
+                st.error("That username is already taken. Choose another.")
+
+            else:
+
+                success, message = create_user(
+                    username,
+                    google_email,
+                    password,
+                )
+
+                if success:
+
+                    st.session_state.user_name = username
+                    st.session_state.user_email = google_email
+                    st.session_state.user_role = "User"
+                    st.session_state.is_authenticated = True
+                    st.session_state.username_authenticated = True
+                    st.session_state.access_token = None
+
+                    st.success("Account created successfully!")
+
+                    st.switch_page("app.py")
+
+                else:
+                    st.error(message)
+
+    st.stop()
 
 
-# ---------------------------------------------------------
-# Back to Chat
-# ---------------------------------------------------------
-
-if st.button("⬅️ Back to Chat", use_container_width=False):
-    st.switch_page("app.py")
-
-
-# ---------------------------------------------------------
-# Login Card
-# ---------------------------------------------------------
+# =========================================================
+# EXISTING USER → USERNAME + PASSWORD LOGIN
+# =========================================================
 
 st.markdown(
     """
     <div class="auth-card">
         <div class="auth-title">Welcome back</div>
         <div class="auth-subtitle">
-            Sign in securely with your Google account
+            Enter your username and password
         </div>
     </div>
     """,
@@ -120,17 +268,53 @@ st.markdown(
 )
 
 
-# ---------------------------------------------------------
-# Google Login
-# ---------------------------------------------------------
-
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
 
-    if st.button("Sign in with Google", type="primary"):
-        st.login()
+    st.info(f"Google account verified: {google_email}")
 
-    st.caption(
-        "You will enter your Gmail password securely on Google's sign-in page."
+    username = st.text_input(
+        "Username",
+        placeholder="Enter your username",
     )
+
+    password = st.text_input(
+        "Password",
+        type="password",
+        placeholder="Enter your password",
+    )
+
+    if st.button("Sign In", type="primary"):
+
+        if not username:
+            st.error("Please enter your username.")
+
+        elif not password:
+            st.error("Please enter your password.")
+
+        else:
+
+            valid = authenticate_user(
+                username,
+                password,
+                google_email,
+            )
+
+            if valid:
+
+                st.session_state.user_name = username
+                st.session_state.user_email = google_email
+                st.session_state.user_role = "User"
+                st.session_state.is_authenticated = True
+                st.session_state.username_authenticated = True
+                st.session_state.access_token = None
+
+                st.success("Login successful!")
+
+                st.switch_page("app.py")
+
+            else:
+                st.error(
+                    "Invalid username or password for this Google account."
+                )
