@@ -38,6 +38,48 @@ HEALTH_ENDPOINT = "/health"
 UPLOAD_ENDPOINT = "/upload"
 REQUEST_TIMEOUT = 120
 
+# ============================================================
+# GOOGLE AUTHENTICATION
+# ============================================================
+
+def require_google_login() -> None:
+    """Require Google login before opening the application."""
+
+    if not hasattr(st.user, "is_logged_in"):
+        st.error("Google authentication is not configured.")
+        st.stop()
+
+    if not st.user.is_logged_in:
+
+        st.markdown("# 🔐 Welcome back")
+
+        st.markdown(
+            "### Sign in with your Google account"
+        )
+
+        st.write(
+            "Google securely verifies your Gmail account and "
+            "password. Your Google password is never sent to "
+            "or stored by this application."
+        )
+
+        st.divider()
+
+        st.button(
+            "Continue with Google",
+            on_click=st.login,
+            use_container_width=True,
+        )
+
+        st.caption(
+            "You will enter your Gmail password on Google's "
+            "secure sign-in page."
+        )
+
+        st.stop()
+
+
+
 # Directory to save chat history locally
 CHATS_DIR = Path("frontend/chats")
 CHATS_DIR.mkdir(parents=True, exist_ok=True)
@@ -52,6 +94,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 
 # ============================================================
 # MODERN SAAS CUSTOM CSS
@@ -165,7 +208,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 # ============================================================
 # STATE INITIALIZATION & HELPERS
 # ============================================================
@@ -173,38 +215,79 @@ st.markdown(
 def get_initials(name: str) -> str:
     """Generate up to 2 capital initials from the user name."""
     parts = name.strip().split()
+
     if not parts:
         return "GU"
+
     if len(parts) == 1:
         return parts[0][:2].upper()
+
     return (parts[0][0] + parts[-1][0]).upper()
+
 
 def initialize_session_state() -> None:
     """Initialize state variables across Streamlit reruns."""
+
+    # --------------------------------------------------------
+    # Chat Session
+    # --------------------------------------------------------
+
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
+
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
     if "doc_id" not in st.session_state:
         st.session_state.doc_id = None
+
     if "doc_name" not in st.session_state:
         st.session_state.doc_name = None
+
     if "doc_chunks" not in st.session_state:
         st.session_state.doc_chunks = 0
+
     if "api_url" not in st.session_state:
         st.session_state.api_url = DEFAULT_API_URL
+
     if "pending_prompt" not in st.session_state:
         st.session_state.pending_prompt = None
 
-    # Dynamic Auth Session Defaults
+    # --------------------------------------------------------
+    # Authentication
+    # --------------------------------------------------------
+
     if "user_name" not in st.session_state:
         st.session_state.user_name = "Guest User"
+
     if "user_role" not in st.session_state:
         st.session_state.user_role = "Guest"
+
     if "is_authenticated" not in st.session_state:
         st.session_state.is_authenticated = False
 
+    # JWT access token received from backend
+    if "access_token" not in st.session_state:
+        st.session_state.access_token = None
+
+    # Logged-in user's email
+    if "user_email" not in st.session_state:
+        st.session_state.user_email = None
+
+    # Database user ID
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None
+
+
+# Initialize all session state variables
 initialize_session_state()
+
+# ============================================================
+# AUTHENTICATION CHECK
+# ============================================================
+
+if not st.session_state.is_authenticated:
+    st.switch_page("pages/sign_in.py")
 
 # ============================================================
 # CALLBACK FUNCTIONS (Instant UI resets)
@@ -247,10 +330,18 @@ def set_quick_prompt(prompt: str) -> None:
     st.session_state.pending_prompt = prompt
 
 def sign_out() -> None:
-    """Callback to reset user auth."""
+    """Log the user out of the application and Google."""
+
+    # Clear application session
     st.session_state.user_name = "Guest User"
     st.session_state.user_role = "Guest"
+    st.session_state.user_email = None
+    st.session_state.user_id = None
+    st.session_state.access_token = None
     st.session_state.is_authenticated = False
+
+    # Log out from Google/Streamlit authentication
+    st.logout()
 
 # ============================================================
 # DATA LOGIC
@@ -289,31 +380,77 @@ def check_backend_status() -> tuple[bool, str]:
     except Exception:
         return False, "Offline"
 
-def stream_chat_response(question: str, session_id: str, doc_id: Optional[str] = None) -> Generator[str, None, None]:
-    payload = {"session_id": session_id, "message": question}
+def stream_chat_response(
+    question: str,
+    session_id: str,
+    doc_id: Optional[str] = None
+) -> Generator[str, None, None]:
+
+    payload = {
+        "session_id": session_id,
+        "message": question
+    }
+
     if doc_id:
         payload["doc_id"] = doc_id
 
-    try:
-        with requests.post(f"{get_api_url()}{CHAT_ENDPOINT}", json=payload, stream=True, timeout=REQUEST_TIMEOUT) as response:
-            if response.status_code != 200:
-                raise RuntimeError(f"Backend HTTP {response.status_code}: {response.text}")
+    # JWT authentication
+    headers = {}
 
-            for raw_line in response.iter_lines(decode_unicode=True):
-                if not raw_line: continue
+    if st.session_state.get("access_token"):
+        headers["Authorization"] = (
+            f"Bearer {st.session_state.access_token}"
+        )
+
+    try:
+        with requests.post(
+            f"{get_api_url()}{CHAT_ENDPOINT}",
+            json=payload,
+            headers=headers,
+            stream=True,
+            timeout=REQUEST_TIMEOUT
+        ) as response:
+
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Backend HTTP {response.status_code}: {response.text}"
+                )
+
+            for raw_line in response.iter_lines(
+                decode_unicode=True
+            ):
+                if not raw_line:
+                    continue
+
                 line = raw_line.rstrip("\r")
-                if not line.startswith("data:"): continue
+
+                if not line.startswith("data:"):
+                    continue
 
                 data = line[len("data:"):].strip()
-                if data == "[DONE]": break
-                if not data: continue
+
+                if data == "[DONE]":
+                    break
+
+                if not data:
+                    continue
 
                 try:
                     parsed = json.loads(data)
+
                     if isinstance(parsed, dict):
-                        yield str(parsed.get("content", parsed.get("token", parsed.get("text", ""))))
+                        yield str(
+                            parsed.get(
+                                "content",
+                                parsed.get(
+                                    "token",
+                                    parsed.get("text", "")
+                                )
+                            )
+                        )
                     else:
                         yield str(parsed)
+
                 except json.JSONDecodeError:
                     yield data
 
@@ -332,16 +469,19 @@ def display_sources(sources: list) -> None:
                     st.caption(f"📍 Page: {page}")
             else:
                 st.markdown(f"**{index}. 📄 {source}**")
-
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 def render_sidebar() -> None:
     with st.sidebar:
-        
+
+        # --------------------------------------------------------
         # User Profile
+        # --------------------------------------------------------
+
         initials = get_initials(st.session_state.user_name)
+
         st.markdown(
             f"""
             <div class="user-profile">
@@ -355,86 +495,288 @@ def render_sidebar() -> None:
             unsafe_allow_html=True
         )
 
+        # --------------------------------------------------------
         # Document Ingestion
-        st.markdown("### 📄 Document Ingestion")
-        uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"], label_visibility="collapsed")
-        
-        if uploaded_file is not None:
-            if st.button("🚀 Process & Index PDF", use_container_width=True):
-                with st.spinner("Chunking & Embedding into ChromaDB..."):
-                    try:
-                        files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
-                        response = requests.post(f"{get_api_url()}{UPLOAD_ENDPOINT}", files=files, timeout=REQUEST_TIMEOUT)
-                        if response.status_code == 200:
-                            data = response.json()
-                            st.session_state.doc_id = data.get("doc_id")
-                            st.session_state.doc_name = uploaded_file.name
-                            st.toast(f"✅ Ingested {uploaded_file.name} successfully!", icon="🎉")
-                            st.rerun()
-                        else:
-                            st.error(f"Upload failed: {response.text}")
-                    except Exception as err:
-                        st.error(f"Upload connection error: {err}")
+        # --------------------------------------------------------
 
-        # Active Scope
+        st.markdown("### 📄 Document Ingestion")
+
+        uploaded_file = st.file_uploader(
+            "Upload PDF Document",
+            type=["pdf"],
+            label_visibility="collapsed"
+        )
+
+        if uploaded_file is not None:
+
+            if st.button(
+                "🚀 Process & Index PDF",
+                use_container_width=True
+            ):
+
+                with st.spinner(
+                    "Chunking & Embedding into ChromaDB..."
+                ):
+
+                    try:
+
+                        # Prepare PDF file
+                        files = {
+                            "file": (
+                                uploaded_file.name,
+                                uploaded_file.getvalue(),
+                                "application/pdf"
+                            )
+                        }
+
+                        # Prepare JWT authentication header
+                        headers = {}
+
+                        if st.session_state.get("access_token"):
+                            headers["Authorization"] = (
+                                f"Bearer {st.session_state.access_token}"
+                            )
+
+                        # Send PDF to FastAPI backend
+                        response = requests.post(
+                            f"{get_api_url()}{UPLOAD_ENDPOINT}",
+                            files=files,
+                            headers=headers,
+                            timeout=REQUEST_TIMEOUT
+                        )
+
+                        # Successful upload
+                        if response.status_code == 200:
+
+                            data = response.json()
+
+                            st.session_state.doc_id = data.get(
+                                "doc_id"
+                            )
+
+                            st.session_state.doc_name = (
+                                uploaded_file.name
+                            )
+
+                            st.toast(
+                                f"✅ Ingested {uploaded_file.name} successfully!",
+                                icon="🎉"
+                            )
+
+                            st.rerun()
+
+                        # Authentication error
+                        elif response.status_code == 401:
+
+                            st.error(
+                                "🔐 Authentication required. "
+                                "Please sign in again."
+                            )
+
+                        # Other backend errors
+                        else:
+
+                            st.error(
+                                f"Upload failed: {response.text}"
+                            )
+
+                    except Exception as err:
+
+                        st.error(
+                            f"Upload connection error: {err}"
+                        )
+
+        # --------------------------------------------------------
+        # Active PDF Scope
+        # --------------------------------------------------------
+
         if st.session_state.doc_id:
+
             st.markdown(
                 f"""
                 <div class="metric-card">
-                    <div class="metric-card-title">Active PDF Scope</div>
-                    <div class="metric-card-value">📄 {st.session_state.doc_name}</div>
+                    <div class="metric-card-title">
+                        Active PDF Scope
+                    </div>
+
+                    <div class="metric-card-value">
+                        📄 {st.session_state.doc_name}
+                    </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            st.button("❌ Remove Active Scope", on_click=remove_active_scope, use_container_width=True)
+
+            st.button(
+                "❌ Remove Active Scope",
+                on_click=remove_active_scope,
+                use_container_width=True
+            )
+
+        # --------------------------------------------------------
+        # Divider
+        # --------------------------------------------------------
 
         st.markdown("---")
-        
+
+        # --------------------------------------------------------
         # Recent Chats
+        # --------------------------------------------------------
+
         st.markdown("### 📝 Recent Chats")
+
         col1, col2 = st.columns(2)
-        
-        # Using on_click callbacks for instant response
-        col1.button("➕ New Chat", on_click=start_new_chat, use_container_width=True)
-        col2.button("🗑️ Delete", on_click=delete_current_chat, use_container_width=True)
-            
-        st.markdown("<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True)
-        
+
+        # New Chat
+        col1.button(
+            "➕ New Chat",
+            on_click=start_new_chat,
+            use_container_width=True
+        )
+
+        # Delete Current Chat
+        col2.button(
+            "🗑️ Delete",
+            on_click=delete_current_chat,
+            use_container_width=True
+        )
+
+        st.markdown(
+            "<div style='margin-bottom: 10px;'></div>",
+            unsafe_allow_html=True
+        )
+
+        # --------------------------------------------------------
+        # Chat History
+        # --------------------------------------------------------
+
         chat_files = list(CHATS_DIR.glob("*.json"))
+
         if chat_files:
-            chat_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+
+            chat_files.sort(
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+
             for file_path in chat_files:
+
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+
+                    with open(
+                        file_path,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+
                         data = json.load(f)
-                        
+
                     sess_id = data.get("session_id")
-                    title = data.get("title", "Unknown Chat")
-                    is_active = (sess_id == st.session_state.session_id)
-                    btn_label = f"🟢 {title}" if is_active else f"💬 {title}"
-                    
-                    if st.button(btn_label, key=f"hist_{sess_id}", on_click=load_historical_chat, args=(sess_id, data.get("messages", []), data.get("doc_id"), data.get("doc_name")), use_container_width=True):
-                        pass # Callback handles state update
+
+                    title = data.get(
+                        "title",
+                        "Unknown Chat"
+                    )
+
+                    is_active = (
+                        sess_id ==
+                        st.session_state.session_id
+                    )
+
+                    btn_label = (
+                        f"🟢 {title}"
+                        if is_active
+                        else f"💬 {title}"
+                    )
+
+                    st.button(
+                        btn_label,
+                        key=f"hist_{sess_id}",
+                        on_click=load_historical_chat,
+                        args=(
+                            sess_id,
+                            data.get("messages", []),
+                            data.get("doc_id"),
+                            data.get("doc_name")
+                        ),
+                        use_container_width=True
+                    )
+
                 except Exception:
                     continue
+
         else:
-            st.caption("No previous chats found.")
+
+            st.caption(
+                "No previous chats found."
+            )
+
+        # --------------------------------------------------------
+        # Divider
+        # --------------------------------------------------------
 
         st.markdown("---")
 
-        # Settings
-        with st.expander("⚙️ Settings & System Status", expanded=False):
-            is_connected, status_text = check_backend_status()
-            color = "rgba(63, 185, 80, 0.12)" if is_connected else "rgba(248,81,73,0.15)"
-            text_color = "#3fb950" if is_connected else "#f85149"
-            
-            st.markdown(f'<div class="scope-pill scope-pill-global" style="margin-bottom: 10px; width:100%; background:{color}; color:{text_color};">{"🟢" if is_connected else "🔴"} {status_text}</div>', unsafe_allow_html=True)
+        # --------------------------------------------------------
+        # Settings & System Status
+        # --------------------------------------------------------
 
-            api_url = st.text_input("Backend Endpoint", value=st.session_state.api_url)
+        with st.expander(
+            "⚙️ Settings & System Status",
+            expanded=False
+        ):
+
+            # Backend status
+            is_connected, status_text = (
+                check_backend_status()
+            )
+
+            color = (
+                "rgba(63, 185, 80, 0.12)"
+                if is_connected
+                else "rgba(248, 81, 73, 0.15)"
+            )
+
+            text_color = (
+                "#3fb950"
+                if is_connected
+                else "#f85149"
+            )
+
+            status_icon = (
+                "🟢"
+                if is_connected
+                else "🔴"
+            )
+
+            st.markdown(
+                f"""
+                <div
+                    class="scope-pill scope-pill-global"
+                    style="
+                        margin-bottom: 10px;
+                        width: 100%;
+                        background: {color};
+                        color: {text_color};
+                    "
+                >
+                    {status_icon} {status_text}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Backend URL
+            api_url = st.text_input(
+                "Backend Endpoint",
+                value=st.session_state.api_url
+            )
+
             if api_url:
-                st.session_state.api_url = api_url.strip().rstrip("/")
 
+                st.session_state.api_url = (
+                    api_url.strip().rstrip("/")
+                )
 # ============================================================
 # CHAT LOGIC
 # ============================================================
