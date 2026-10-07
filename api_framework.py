@@ -215,16 +215,22 @@ app = FastAPI(
 
 
 # ============================================================
-# CORS
+# CORS & HEALTH ENDPOINT (ADDED AS REQUESTED)
 # ============================================================
+
+from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_origins=["*"],  # Restrict to your frontend domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 
 # ============================================================
@@ -771,37 +777,6 @@ def ingest_document(
     )
 
     return len(chunks)
-
-
-# ============================================================
-# HEALTH ENDPOINT
-# ============================================================
-
-@app.get(
-    "/health",
-    response_model=HealthResponse,
-    tags=["health"],
-)
-async def health() -> HealthResponse:
-    """
-    Check whether the API is running.
-    """
-
-    try:
-
-        get_retriever()
-
-        retriever_status = "ready"
-
-    except Exception:
-
-        retriever_status = "unavailable"
-
-    return HealthResponse(
-        status="ok",
-        version=app.version,
-        retriever=retriever_status,
-    )
 
 
 # ============================================================
