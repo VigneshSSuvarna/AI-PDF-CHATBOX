@@ -37,6 +37,7 @@ CHAT_ENDPOINT = "/chat"
 HEALTH_ENDPOINT = "/health"
 UPLOAD_ENDPOINT = "/upload"
 REQUEST_TIMEOUT = 120
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 # ============================================================
 # GOOGLE AUTHENTICATION
