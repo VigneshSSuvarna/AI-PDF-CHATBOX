@@ -17,8 +17,11 @@ the Week 3 FastAPI + LLM backend.
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from langchain_huggingface import HuggingFaceEmbeddings
+from dotenv import load_dotenv
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
+
+load_dotenv()
 
 
 # ============================================================
@@ -29,7 +32,7 @@ CHROMA_DB_PATH = "chroma_db"
 
 COLLECTION_NAME = "capstone_knowledge_base"
 
-EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 
 DEFAULT_TOP_K = 5
 
@@ -58,35 +61,26 @@ class Retriever:
         self.model_name = model_name
 
         # ----------------------------------------------------
-        # Check whether ChromaDB exists
+        # Ensure ChromaDB directory exists
         # ----------------------------------------------------
 
-        if not os.path.exists(self.db_path):
-            raise FileNotFoundError(
-                f"ChromaDB directory '{self.db_path}' was not found.\n"
-                "Please run vector_store.py first."
-            )
+        os.makedirs(self.db_path, exist_ok=True)
 
         # ----------------------------------------------------
-        # Load embedding model
+        # Initialize API embedding model
         # ----------------------------------------------------
 
         print(
-            f"Loading embedding model: {self.model_name}"
+            f"Initializing embedding model: {self.model_name}"
         )
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=self.model_name,
-            model_kwargs={
-                "device": "cpu"
-            },
-            encode_kwargs={
-                "normalize_embeddings": True
-            },
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model=self.model_name,
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
         )
 
         # ----------------------------------------------------
-        # Connect to existing ChromaDB
+        # Connect to ChromaDB
         # ----------------------------------------------------
 
         print("Connecting to ChromaDB...")
