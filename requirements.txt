@@ -16,3 +16,4 @@ pypdf
 beautifulsoup4
 spacy
 streamlit
+langchain-chroma
