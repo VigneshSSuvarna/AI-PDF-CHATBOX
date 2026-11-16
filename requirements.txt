@@ -1,0 +1,20 @@
+@"
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+python-dotenv
+requests
+chromadb
+langchain
+langchain-community
+langchain-core
+langchain-text-splitters
+langchain-huggingface
+langchain-groq
+langchain-google-genai
+pypdf
+beautifulsoup4
+spacy
+streamlit
+"@ | Set-Content -Path "requirements.txt" -Encoding UTF8
