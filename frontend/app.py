@@ -32,13 +32,12 @@ import streamlit as st
 # CONFIGURATION
 # ============================================================
 
-DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_URL = "https://ai-pdf-chatbox-1.onrender.com"
 CHAT_ENDPOINT = "/chat"
 HEALTH_ENDPOINT = "/health"
 UPLOAD_ENDPOINT = "/upload"
 REQUEST_TIMEOUT = 120
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
-
+BACKEND_URL = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", DEFAULT_API_URL)).rstrip("/")
 # ============================================================
 # GOOGLE AUTHENTICATION
 # ============================================================
