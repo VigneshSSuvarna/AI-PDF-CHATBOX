@@ -5,6 +5,7 @@ llm.py
 Member 4: LLM Integration
 
 Supports:
+    - OpenRouter
     - Google Gemini
     - Groq
     - Ollama (Local)
@@ -28,14 +29,18 @@ Member 4 does NOT handle:
 
 Environment variables:
 
-    LLM_PROVIDER=ollama
+    LLM_PROVIDER=openrouter
+
+    OPENROUTER_API_KEY=...
+    OPENROUTER_MODEL=google/gemini-2.0-flash-001
+    OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
     GEMINI_API_KEY=...
     GEMINI_MODEL=gemini-2.5-flash
 
     GROQ_API_KEY=...
     GROQ_MODEL=llama-3.3-70b-versatile
-    
+
     OLLAMA_MODEL=llama3
     OLLAMA_BASE_URL=http://localhost:11434
 """
@@ -72,8 +77,22 @@ load_dotenv(
 
 LLM_PROVIDER = os.getenv(
     "LLM_PROVIDER",
-    "gemini",
-).lower()
+    "openrouter" if os.getenv("OPENROUTER_API_KEY") else "gemini",
+).strip().lower()
+
+OPENROUTER_API_KEY = os.getenv(
+    "OPENROUTER_API_KEY"
+)
+
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL",
+    "google/gemini-2.0-flash-001",
+)
+
+OPENROUTER_BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL",
+    "https://openrouter.ai/api/v1",
+)
 
 GROQ_API_KEY = os.getenv(
     "GROQ_API_KEY"
@@ -84,8 +103,9 @@ GROQ_MODEL = os.getenv(
     "llama-3.3-70b-versatile",
 )
 
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY"
+GEMINI_API_KEY = (
+    os.getenv("GEMINI_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
 )
 
 GEMINI_MODEL = os.getenv(
@@ -108,6 +128,12 @@ print("LLM CONFIGURATION")
 print("========================================")
 
 print("LLM_PROVIDER:", LLM_PROVIDER)
+
+print(
+    "OPENROUTER_API_KEY:",
+    "CONFIGURED" if OPENROUTER_API_KEY else "NOT CONFIGURED"
+)
+print("OPENROUTER_MODEL:", OPENROUTER_MODEL)
 
 print(
     "GROQ_API_KEY:",
@@ -134,24 +160,13 @@ print("========================================")
 # CONFIGURATION
 # ============================================================
 
-PROVIDER = os.getenv(
-    "LLM_PROVIDER",
-    "gemini",
-).strip().lower()
+PROVIDER = LLM_PROVIDER
 
 MODELS = {
-    "gemini": os.getenv(
-        "GEMINI_MODEL",
-        "gemini-2.5-flash",
-    ),
-    "groq": os.getenv(
-        "GROQ_MODEL",
-        "llama-3.3-70b-versatile",
-    ),
-    "ollama": os.getenv(
-        "OLLAMA_MODEL",
-        "llama3",
-    ),
+    "openrouter": OPENROUTER_MODEL,
+    "gemini": GEMINI_MODEL,
+    "groq": GROQ_MODEL,
+    "ollama": OLLAMA_MODEL,
 }
 
 MAX_OUTPUT_TOKENS = int(
@@ -185,6 +200,7 @@ logger = logging.getLogger(
 # ============================================================
 
 SUPPORTED_PROVIDERS = {
+    "openrouter",
     "gemini",
     "groq",
     "ollama",
@@ -209,8 +225,15 @@ def validate_configuration() -> None:
     if PROVIDER == "ollama":
         return
 
+    if PROVIDER == "gemini":
+        if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+            raise RuntimeError(
+                "GEMINI_API_KEY (or GOOGLE_API_KEY) is not configured."
+            )
+        return
+
     key_names = {
-        "gemini": "GEMINI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
         "groq": "GROQ_API_KEY",
     }
 
@@ -220,6 +243,93 @@ def validate_configuration() -> None:
         raise RuntimeError(
             f"{key_name} is not configured."
         )
+
+
+# ============================================================
+# OPENROUTER (SSE STREAMING)
+# ============================================================
+
+def _stream_openrouter(
+    prompt: str,
+) -> Generator[str, None, None]:
+    """
+    Stream response chunks directly from OpenRouter Chat Completions API.
+    """
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    url = f"{OPENROUTER_BASE_URL.rstrip('/')}/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": os.getenv(
+            "APP_URL",
+            "https://ai-pdf-chatboxgit-bbhsv8xdll7e3vz498pf6n.streamlit.app",
+        ),
+        "X-Title": "VYPeR-AG PDF Chatbot",
+    }
+
+    payload = {
+        "model": MODELS["openrouter"],
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        "stream": True,
+    }
+
+    try:
+        with requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=120,
+        ) as response:
+            if not response.ok:
+                raise RuntimeError(
+                    f"HTTP {response.status_code}: {response.text}"
+                )
+
+            has_yielded = False
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                if raw_line.startswith(":"):
+                    # OpenRouter SSE keep-alive comment
+                    continue
+                if not raw_line.startswith("data: "):
+                    continue
+
+                data_str = raw_line[len("data: "):].strip()
+                if data_str == "[DONE]":
+                    break
+
+                data = json.loads(data_str)
+                if "error" in data:
+                    raise RuntimeError(str(data["error"]))
+
+                choices = data.get("choices") or []
+                if choices:
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        has_yielded = True
+                        yield content
+
+            if not has_yielded:
+                raise RuntimeError(
+                    f"OpenRouter returned no text for model '{MODELS['openrouter']}'."
+                )
+
+    except Exception as error:
+        raise RuntimeError(
+            f"OpenRouter API streaming failed for model "
+            f"'{MODELS['openrouter']}': {error}"
+        ) from error
 
 
 # ============================================================
@@ -253,7 +363,7 @@ def _stream_ollama(
                         yield data["response"]
                     if data.get("done"):
                         break
-                        
+
     except requests.exceptions.ConnectionError:
         raise RuntimeError(
             f"Could not connect to Ollama at {OLLAMA_BASE_URL}. "
@@ -269,6 +379,7 @@ def _stream_ollama(
 
 from google import genai
 
+
 def _stream_gemini(
     prompt: str,
 ) -> Generator[str, None, None]:
@@ -277,8 +388,13 @@ def _stream_gemini(
     Enables low-latency token-by-token streaming to the client.
     """
 
+    api_key = (
+        os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
+
     client = genai.Client(
-        api_key=GEMINI_API_KEY
+        api_key=api_key
     )
 
     try:
@@ -398,7 +514,12 @@ def stream_llm_response(
     )
 
     try:
-        if PROVIDER == "gemini":
+        if PROVIDER == "openrouter":
+            yield from _stream_openrouter(
+                prompt
+            )
+
+        elif PROVIDER == "gemini":
             yield from _stream_gemini(
                 prompt
             )
