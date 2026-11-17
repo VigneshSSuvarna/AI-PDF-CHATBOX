@@ -76,7 +76,7 @@ class Retriever:
 
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model=self.model_name,
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            google_api_key=os.getenv("GEMINI_API_KEY"),
         )
 
         # ----------------------------------------------------
