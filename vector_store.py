@@ -14,8 +14,7 @@ load_dotenv()
 INPUT_FILE = os.path.join("output", "parent_child_chunks.pkl")
 DB_DIR = "chroma_db"
 
-EMBEDDING_MODEL_NAME = "models/text-embedding-004"
-
+EMBEDDING_MODEL_NAME = "models/gemini-embedding-001"
 
 def build_vector_database():
     print("==================================================")

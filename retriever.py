@@ -32,8 +32,7 @@ CHROMA_DB_PATH = "chroma_db"
 
 COLLECTION_NAME = "capstone_knowledge_base"
 
-EMBEDDING_MODEL_NAME = "models/text-embedding-004"
-
+EMBEDDING_MODEL_NAME = "models/gemini-embedding-001"
 DEFAULT_TOP_K = 5
 
 
