@@ -9,3 +9,5 @@ uploads/*
 !uploads/.gitkeep
 frontend/chats/*
 !frontend/chats/.gitkeep
+
+chroma_db/
